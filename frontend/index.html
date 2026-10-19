@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StudyBuddy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="layout">
+
+    <!-- LEFT: your notes -->
+    <aside class="shelf">
+      <h1 class="brand">Study<mark>Buddy</mark></h1>
+
+      <label class="dropzone" id="dropzone" for="file-input">
+        <strong>Add your notes</strong>
+        <span>Drop a PDF or .txt here, or click to choose</span>
+        <input type="file" id="file-input" accept=".pdf,.txt" multiple hidden>
+      </label>
+
+      <h2 class="shelf-title">Your notes</h2>
+      <ul class="file-list" id="file-list">
+        <li class="empty">No notes yet. Add one to get started.</li>
+      </ul>
+    </aside>
+
+    <!-- RIGHT: the chat -->
+    <main class="chat">
+      <div class="messages" id="messages" aria-live="polite">
+        <div class="msg bot">
+          <p>Hi! Add your notes on the left, then ask me anything about them.</p>
+        </div>
+      </div>
+
+      <form class="composer" id="chat-form">
+        <textarea id="question" rows="1" placeholder="Ask about your notes…" aria-label="Your question" required></textarea>
+        <button type="submit" id="send">Ask</button>
+      </form>
+    </main>
+
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

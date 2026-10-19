@@ -1,0 +1,195 @@
+/* ---------- Design tokens: one place to change colors and fonts ---------- */
+ :root {
+    --paper: #0d0d0d;      /* page background */
+    --ink: #f2f2f2;        /* main text */
+    --pencil: #9a9a9a;     /* grey secondary text */
+    --highlight: #ff7b00e6;  /* marker color */
+    --margin: #ff6b6b;     /* red accent line / errors */
+    --line: #2a2a2a;       /* borders and grid lines */
+    --white: #1a1a1a;      /* cards: drop zone, bot bubbles, input */
+
+  --font-ui: "Bricolage Grotesque", system-ui, sans-serif;
+  --font-read: "Source Serif 4", Georgia, serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; }
+
+body {
+  font-family: var(--font-ui);
+  color: var(--ink);
+  background: var(--paper);
+  height: 100vh;
+}
+
+/* ---------- Two-column layout ---------- */
+.layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  height: 100vh;
+}
+
+/* ---------- Left: shelf ---------- */
+.shelf {
+  padding: 1.75rem 1.25rem;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+.brand {
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin-bottom: 1.75rem;
+}
+.brand mark {
+  background: linear-gradient(transparent 55%, var(--highlight) 55%);
+  color: inherit;
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1.25rem;
+  border: 2px dashed var(--pencil);
+  border-radius: 6px;
+  background: var(--white);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.dropzone span { font-size: 0.875rem; color: var(--pencil); }
+.dropzone:hover,
+.dropzone.dragover { border-color: var(--ink); background: #2a2500; }
+.dropzone:focus-within { outline: 3px solid var(--ink); outline-offset: 2px; }
+
+.shelf-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.75rem 0 0.5rem;
+}
+
+.file-list { list-style: none; padding: 0; }
+.file-list li {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.9rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  overflow-wrap: anywhere;
+}
+.file-list .empty { color: var(--pencil); border: none; }
+.file-list .status { color: var(--pencil); white-space: nowrap; }
+.file-list .status.done { color: #4ade80; }
+.file-list .status.error { color: var(--margin); }
+
+/* ---------- Right: chat ---------- */
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-width: 0;
+  /* faint graph paper */
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 28px 28px;
+  background-color: var(--paper);
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2rem clamp(1rem, 6vw, 4rem);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.msg { max-width: 68ch; }
+
+/* your question: highlighter marker */
+.msg.user {
+  align-self: flex-end;
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+.msg.user p {
+  display: inline;
+  background: linear-gradient(transparent 50%, var(--highlight) 50%);
+  padding: 0 0.15em;
+}
+
+/* the answer: a note page with a red margin rule */
+.msg.bot {
+  background: var(--white);
+  border-left: 3px solid var(--margin);
+  padding: 1rem 1.25rem;
+  font-family: var(--font-read);
+  font-size: 1.05rem;
+  line-height: 1.7;
+  box-shadow: 0 1px 0 var(--line);
+}
+.msg.bot p + p,
+.msg.bot p + ul,
+.msg.bot ul + p { margin-top: 0.6rem; }
+.msg.bot ul { padding-left: 1.25rem; }
+.msg.bot li { margin-top: 0.25rem; }
+.msg.bot strong { color: var(--highlight); }
+.msg.bot .sources {
+  margin-top: 0.9rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--line);
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  color: var(--pencil);
+}
+.msg.bot.error { border-left-color: var(--ink); color: var(--margin); }
+.msg.bot.thinking { color: var(--pencil); font-style: italic; }
+
+/* ---------- Composer ---------- */
+.composer {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem clamp(1rem, 6vw, 4rem) 1.5rem;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+}
+.composer textarea {
+  flex: 1;
+  resize: none;
+  font: inherit;
+  padding: 0.75rem 1rem;
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  background: var(--white);
+  color: var(--ink);
+  max-height: 8rem;
+}
+.composer textarea:focus-visible,
+.composer button:focus-visible { outline: 3px solid var(--highlight); outline-offset: 2px; }
+
+.composer button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0 1.5rem;
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--white);
+  cursor: pointer;
+}
+.composer button:hover { background: #cfcfcf; }
+.composer button:disabled { opacity: 0.5; cursor: wait; }
+
+/* ---------- Phones: stack the columns ---------- */
+@media (max-width: 760px) {
+  body, .layout { height: auto; min-height: 100vh; }
+  .layout { grid-template-columns: 1fr; }
+  .shelf { border-right: none; border-bottom: 1px solid var(--line); }
+  .chat { height: 80vh; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

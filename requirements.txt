@@ -1,0 +1,6 @@
+flask
+flask-cors
+chromadb
+pymupdf
+groq
+python-dotenv
