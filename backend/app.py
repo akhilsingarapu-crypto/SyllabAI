@@ -9,12 +9,21 @@ from store import add_chunks, delete_source, list_sources, search
 from rag import STUDY_MODES, answer_question, stream_answer, stream_study
 
 app = Flask(__name__)
-CORS(app)  # lets the frontend (opened from a file / other port) call this server
+# Lets the frontend (opened from a file / other port) call this server.
+# When deployed, set ALLOWED_ORIGINS="https://your-site" (comma separated) to lock it down.
+_origins = os.getenv("ALLOWED_ORIGINS", "*")
+CORS(app, origins=[o.strip() for o in _origins.split(",")])
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # reject uploads over 20 MB
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "upload")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED = {".pdf", ".txt"}
 MAX_HISTORY = 6  # last 3 question/answer pairs
+
+
+@app.errorhandler(413)
+def too_large(_err):
+    return jsonify(error="File is too big (limit 20 MB)."), 413
 
 
 def page_ranges(nums):

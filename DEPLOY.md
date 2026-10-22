@@ -19,7 +19,8 @@ Two parts: the Flask backend (needs Python, a disk, a secret key) and the static
 
 ## 3. Before making it public
 
-- Anyone with the link can upload, delete and chat. There is no login. Add one, or keep the
-  link private, or your Groq quota is what gets used.
-- Restrict CORS in `backend/app.py` to your frontend's address: `CORS(app, origins=["https://your-site"])`.
-- Set a max upload size: `app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024`.
+- Backend environment variable: `ALLOWED_ORIGINS=https://your-site` so only your frontend can call it.
+  (Already supported in `backend/app.py`; the default `*` allows everyone, fine for local use.)
+- Uploads over 20 MB are already rejected (`MAX_CONTENT_LENGTH`).
+- Still missing: login. Anyone with the link can upload, delete and chat, and it uses your Groq quota.
+  Keep the link private or add a login first.
