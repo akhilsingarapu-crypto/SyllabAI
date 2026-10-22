@@ -21,6 +21,22 @@ def add_chunks(filename, chunks):
     )
 
 
+def list_sources():
+    """Return [{'name', 'chunks'}] for every uploaded file, sorted by name."""
+    counts = {}
+    for meta in _notes.get(include=["metadatas"])["metadatas"]:
+        counts[meta["source"]] = counts.get(meta["source"], 0) + 1
+    return [{"name": n, "chunks": c} for n, c in sorted(counts.items())]
+
+
+def delete_source(filename):
+    """Remove all of a file's chunks. Returns how many were deleted."""
+    found = _notes.get(where={"source": filename}, include=[])["ids"]
+    if found:
+        _notes.delete(ids=found)
+    return len(found)
+
+
 def search(question, n=4):
     """Return the n chunks closest in meaning to the question."""
     if _notes.count() == 0:

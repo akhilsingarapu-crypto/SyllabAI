@@ -127,6 +127,15 @@ question.addEventListener("input", () => {
 });
 
 // ---------- Uploading notes ----------
+function showEmptyIfNeeded() {
+  if (!fileList.children.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "No notes yet. Add one to get started.";
+    fileList.appendChild(li);
+  }
+}
+
 function addFileRow(name) {
   const empty = fileList.querySelector(".empty");
   if (empty) empty.remove();
@@ -142,6 +151,50 @@ function addFileRow(name) {
   return status;
 }
 
+// Rows for notes the server has stored. Each has a remove button.
+function addSavedRow(file) {
+  const row = document.createElement("li");
+  row.dataset.saved = "1";
+  const label = document.createElement("span");
+  label.textContent = file.name;
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "remove";
+  del.textContent = "Remove";
+  del.setAttribute("aria-label", `Remove ${file.name}`);
+  del.addEventListener("click", () => removeFile(file.name, del));
+  row.append(label, del);
+  return row;
+}
+
+async function refreshFiles() {
+  if (MOCK) return;
+  try {
+    const res = await fetch(`${API_URL}/files`);
+    if (!res.ok) throw new Error();
+    const { files } = await res.json();
+    fileList.querySelectorAll("[data-saved]").forEach((r) => r.remove());
+    const empty = fileList.querySelector(".empty");
+    if (empty) empty.remove();
+    files.slice().reverse().forEach((f) => fileList.prepend(addSavedRow(f)));
+    showEmptyIfNeeded();
+  } catch (err) {
+    // server not running yet; the list stays as it is
+  }
+}
+
+async function removeFile(name, button) {
+  button.disabled = true;
+  try {
+    const res = await fetch(`${API_URL}/files/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    await refreshFiles();
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = "Failed";
+  }
+}
+
 async function uploadFile(file) {
   const status = addFileRow(file.name);
   try {
@@ -155,6 +208,8 @@ async function uploadFile(file) {
     }
     status.textContent = "Ready";
     status.classList.add("done");
+    status.parentElement.remove();       // the saved row from the server replaces it
+    await refreshFiles();
   } catch (err) {
     status.textContent = "Failed";
     status.classList.add("error");
@@ -186,3 +241,5 @@ fileInput.addEventListener("change", () => {
   dropzone.addEventListener(name, (e) => { e.preventDefault(); dropzone.classList.remove("dragover"); })
 );
 dropzone.addEventListener("drop", (e) => handleFiles(e.dataTransfer.files));
+
+refreshFiles();                         // show notes already stored from earlier visits

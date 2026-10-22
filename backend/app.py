@@ -4,7 +4,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 from ingest import ingest_file
-from store import add_chunks, search
+from store import add_chunks, delete_source, list_sources, search
 from rag import answer_question
 
 app = Flask(__name__)
@@ -35,6 +35,23 @@ def upload():
     chunks = ingest_file(path)  # Phase 4: read + split into chunks
     add_chunks(name, chunks)    # Phase 5: embed + store in ChromaDB
     return jsonify(message="saved", filename=name, chunks=len(chunks))
+
+
+@app.get("/files")
+def files():
+    return jsonify(files=list_sources())
+
+
+@app.delete("/files/<path:filename>")
+def delete_file(filename):
+    name = secure_filename(filename)  # same cleaning as upload, blocks ../ tricks
+    removed = delete_source(name)
+    path = os.path.join(UPLOAD_DIR, name)
+    if os.path.isfile(path):
+        os.remove(path)
+    elif not removed:
+        return jsonify(error="No such file"), 404
+    return jsonify(message="deleted", filename=name, chunks=removed)
 
 
 @app.get("/search")
