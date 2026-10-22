@@ -16,5 +16,7 @@ Upload your PDF / .txt notes, then ask questions answered only from those notes 
 
 - Upload and remove notes
 - Follow-up questions (remembers the last 3 turns)
+- Answers stream in as they are written
+- Sources show page numbers (PDFs)
 - Says "couldn't find that" when notes don't cover a question
   (tune `MAX_DISTANCE` in `backend/rag.py`)

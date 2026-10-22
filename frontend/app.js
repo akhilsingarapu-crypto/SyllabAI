@@ -75,22 +75,53 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---------- Asking a question ----------
 const history = [];   // recent turns sent along with each question
-async function askServer(text) {
+// Reads the answer as it is written. The server sends one JSON object per line:
+// {"sources": [...]}, then many {"delta": "text"}, or {"error": "..."}.
+// onText(fullAnswerSoFar) is called after every piece; returns { answer, sources }.
+async function askServer(text, onText) {
   if (MOCK) {
     await sleep(800);
-    return { answer: `(Fake answer) You asked: "${text}".`, sources: [] };
+    const answer = `(Fake answer) You asked: "${text}".`;
+    onText(answer);
+    return { answer, sources: [] };
   }
-  const res = await fetch(`${API_URL}/chat`, {
+  const res = await fetch(`${API_URL}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question: text, history }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Server returned ${res.status}`);
+  }
+
+  let answer = "";
+  let sources = [];
+  const handleLine = (line) => {
+    if (!line.trim()) return;
+    const msg = JSON.parse(line);
+    if (msg.error) throw new Error(msg.error);
+    if (msg.sources) sources = msg.sources;
+    if (msg.delta) { answer += msg.delta; onText(answer); }
+  };
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop();               // last piece may be half a line; keep it for next time
+    lines.forEach(handleLine);
+  }
+  handleLine(buffer);
+
   // Remember this turn so follow-up questions have context
-  history.push({ role: "user", content: text }, { role: "assistant", content: data.answer });
+  history.push({ role: "user", content: text }, { role: "assistant", content: answer });
   history.splice(0, Math.max(0, history.length - 6));
-  return data;
+  return { answer, sources };
 }
 
 form.addEventListener("submit", async (event) => {
@@ -103,12 +134,19 @@ form.addEventListener("submit", async (event) => {
   question.style.height = "auto";
   sendBtn.disabled = true;
   const waiting = addMessage("Reading your notes…", "bot", "thinking");
+  let box = null;                       // the answer bubble, created when the first words arrive
 
   try {
-    waiting.remove();
-    const reply = await askServer(text);
-    addSources(addMessage(reply.answer, "bot"), reply.sources);
+    const reply = await askServer(text, (partial) => {
+      if (!box) { waiting.remove(); box = addMessage("", "bot"); }
+      box.replaceChildren();
+      renderRich(box, partial);
+      messages.scrollTop = messages.scrollHeight;
+    });
+    if (!box) { waiting.remove(); box = addMessage(reply.answer || "(No answer)", "bot"); }
+    addSources(box, reply.sources);
   } catch (err) {
+    waiting.remove();
     addMessage(`Couldn't reach the server. Check that it's running, then ask again. (${err.message})`, "bot", "error");
   } finally {
     sendBtn.disabled = false;

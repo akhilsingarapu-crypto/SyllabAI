@@ -1,11 +1,12 @@
+import json
 import os
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 from ingest import ingest_file
 from store import add_chunks, delete_source, list_sources, search
-from rag import answer_question
+from rag import answer_question, stream_answer
 
 app = Flask(__name__)
 CORS(app)  # lets the frontend (opened from a file / other port) call this server
@@ -77,13 +78,10 @@ def search_notes():
     return jsonify(results=search(q))
 
 
-@app.post("/chat")
-def chat():
+def parse_chat_request():
+    """Return (question, history) from the JSON body, or (None, None) if empty."""
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
-    if not question:
-        return jsonify(error="Empty question"), 400
-
     # Keep only well-formed recent turns; the client is not trusted.
     history = [
         {"role": m["role"], "content": m["content"][:2000]}
@@ -92,6 +90,14 @@ def chat():
         and m.get("role") in ("user", "assistant")
         and isinstance(m.get("content"), str)
     ][-MAX_HISTORY:]
+    return (question or None), history
+
+
+@app.post("/chat")
+def chat():
+    question, history = parse_chat_request()
+    if not question:
+        return jsonify(error="Empty question"), 400
 
     try:
         answer, hits = answer_question(question, history)
@@ -99,6 +105,27 @@ def chat():
         print("chat error:", err)
         return jsonify(error=str(err)), 500
     return jsonify(answer=answer, sources=format_sources(hits))
+
+
+@app.post("/chat/stream")
+def chat_stream():
+    """Same as /chat, but sends the answer piece by piece as JSON lines:
+    {"sources": [...]} first, then {"delta": "text"} repeatedly, or {"error": "..."}."""
+    question, history = parse_chat_request()
+    if not question:
+        return jsonify(error="Empty question"), 400
+
+    def lines():
+        try:
+            hits, pieces = stream_answer(question, history)
+            yield json.dumps({"sources": format_sources(hits)}) + "\n"
+            for piece in pieces:
+                yield json.dumps({"delta": piece}) + "\n"
+        except Exception as err:
+            print("chat error:", err)
+            yield json.dumps({"error": str(err)}) + "\n"
+
+    return Response(lines(), mimetype="application/x-ndjson")
 
 
 if __name__ == "__main__":

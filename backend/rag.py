@@ -43,33 +43,59 @@ def _get_client():
     return _client
 
 
-def answer_question(question, history=None):
-    """RAG: find matching chunks, put them in the prompt, ask the model.
+def _prepare(question, history):
+    """Find matching chunks and build the model messages.
 
-    history: earlier turns as [{"role": "user"|"assistant", "content": str}, ...],
-    so follow-ups like "explain that more simply" make sense.
+    Returns (fixed_reply, hits, messages). fixed_reply is a ready-made answer when
+    no model call is needed (no notes, or nothing related); otherwise None.
     """
     history = history or []
     # A follow-up like "why?" has no keywords, so search with the last question too.
     last_q = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
     hits = search(f"{last_q} {question}".strip(), TOP_K)
     if not hits:
-        return "I don't have any notes yet. Upload a PDF or .txt file first.", []
+        return "I don't have any notes yet. Upload a PDF or .txt file first.", [], None
     hits = [h for h in hits if h["distance"] <= MAX_DISTANCE]
     if not hits:
-        return "I couldn't find that in your notes. Try rephrasing, or upload notes that cover it.", []
+        return "I couldn't find that in your notes. Try rephrasing, or upload notes that cover it.", [], None
 
     context = "\n\n".join(
         f"[Note {i} - {h['source']}]\n{h['text']}" for i, h in enumerate(hits, 1)
     )
-    user_prompt = f"NOTES:\n{context}\n\nQUESTION: {question}"
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *history,
+        {"role": "user", "content": f"NOTES:\n{context}\n\nQUESTION: {question}"},
+    ]
+    return None, hits, messages
 
-    resp = _get_client().chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            *history,
-            {"role": "user", "content": user_prompt},
-        ],
-    )
+
+def answer_question(question, history=None):
+    """RAG: find matching chunks, put them in the prompt, ask the model.
+
+    history: earlier turns as [{"role": "user"|"assistant", "content": str}, ...],
+    so follow-ups like "explain that more simply" make sense.
+    """
+    fixed, hits, messages = _prepare(question, history)
+    if fixed:
+        return fixed, hits
+    resp = _get_client().chat.completions.create(model=MODEL, messages=messages)
     return resp.choices[0].message.content, hits
+
+
+def stream_answer(question, history=None):
+    """Like answer_question, but returns (hits, generator of text pieces)."""
+    fixed, hits, messages = _prepare(question, history)
+    if fixed:
+        return hits, iter([fixed])
+
+    def pieces():
+        stream = _get_client().chat.completions.create(
+            model=MODEL, messages=messages, stream=True
+        )
+        for event in stream:
+            delta = event.choices[0].delta.content if event.choices else None
+            if delta:
+                yield delta
+
+    return hits, pieces()
