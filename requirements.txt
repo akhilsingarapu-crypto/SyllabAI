@@ -4,3 +4,4 @@ chromadb
 pymupdf
 groq
 python-dotenv
+gunicorn

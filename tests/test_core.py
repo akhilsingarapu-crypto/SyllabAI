@@ -84,6 +84,10 @@ class PasswordTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertTrue(res.get_json()["auth"])
 
+    def test_page_loads_without_password_so_login_box_can_show(self):
+        for path in ["/", "/app.js", "/style.css"]:
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+
     def test_protected_routes_need_the_key(self):
         for method, path in [("get", "/files"), ("post", "/chat"), ("delete", "/files/x.pdf")]:
             res = getattr(self.client, method)(path)

@@ -1,12 +1,12 @@
 import hmac
 import json
 import os
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 from ingest import ingest_file
-from store import add_chunks, delete_source, list_sources, search
+from store import DATA_DIR, add_chunks, delete_source, list_sources, search
 from rag import STUDY_MODES, answer_question, stream_answer, stream_study
 
 app = Flask(__name__)
@@ -16,7 +16,8 @@ _origins = os.getenv("ALLOWED_ORIGINS", "*")
 CORS(app, origins=[o.strip() for o in _origins.split(",")])
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # reject uploads over 20 MB
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "upload")
+UPLOAD_DIR = os.path.join(DATA_DIR, "upload")
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED = {".pdf", ".txt"}
 MAX_HISTORY = 6  # last 3 question/answer pairs
@@ -28,7 +29,9 @@ APP_PASSWORD = os.getenv("APP_PASSWORD", "")
 
 @app.before_request
 def require_password():
-    if not APP_PASSWORD or request.method == "OPTIONS" or request.path == "/health":
+    # The page itself must load so it can show the password box; the data routes stay locked.
+    open_paths = {"/", "/health", "/index.html", "/app.js", "/style.css"}
+    if not APP_PASSWORD or request.method == "OPTIONS" or request.path in open_paths:
         return None
     sent = request.headers.get("X-Access-Key", "")
     if not hmac.compare_digest(sent.encode(), APP_PASSWORD.encode()):
@@ -65,6 +68,18 @@ def format_sources(hits):
         f"{name} (p. {page_ranges(nums)})" if nums else name
         for name, nums in sorted(pages.items())
     ]
+
+
+@app.get("/")
+@app.get("/index.html")
+def index():
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
+
+@app.get("/app.js")
+@app.get("/style.css")
+def frontend_file():
+    return send_from_directory(FRONTEND_DIR, request.path.lstrip("/"))
 
 
 @app.get("/health")

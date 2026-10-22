@@ -2,7 +2,8 @@
 // MOCK = true  -> fake replies, no server needed (Phase 2).
 // MOCK = false -> talk to the real Flask server (from Phase 3 on).
 const MOCK = false;
-const API_URL = "http://127.0.0.1:5000";
+// Opened as a file: talk to the local server. Served by the server itself (e.g. on Render): same address.
+const API_URL = location.protocol === "file:" ? "http://127.0.0.1:5000" : location.origin;
 
 // ---------- Talking to the server (adds the password when one is set) ----------
 const KEY_NAME = "syllabai-key";

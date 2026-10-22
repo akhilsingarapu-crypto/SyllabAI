@@ -1,0 +1,26 @@
+# Render Blueprint: one web service that serves both the API and the page.
+# A persistent disk needs a paid plan (starter). On the free plan delete the `disk:` block and
+# set plan: free, but uploaded notes are then lost whenever the service restarts or redeploys.
+services:
+  - type: web
+    name: syllabai
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: cd backend && gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DEBUG
+        value: "0"
+      - key: DATA_DIR
+        value: /var/data
+      - key: GROQ_API_KEY
+        sync: false        # you type this in the Render dashboard; it is never stored in git
+      - key: APP_PASSWORD
+        sync: false        # the password people must enter to use the site
+    disk:
+      name: notes
+      mountPath: /var/data
+      sizeGB: 1

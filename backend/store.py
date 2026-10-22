@@ -1,7 +1,9 @@
 import os
 import chromadb
 
-DB_DIR = os.path.join(os.path.dirname(__file__), "..", "chroma_db")
+# DATA_DIR lets a host keep notes on a persistent disk (e.g. /var/data); locally it is the project folder.
+DATA_DIR = os.getenv("DATA_DIR") or os.path.join(os.path.dirname(__file__), "..")
+DB_DIR = os.path.join(DATA_DIR, "chroma_db")
 
 # Saved on disk, so notes survive a server restart.
 # Chroma's built-in embedding model (MiniLM) turns text into vectors for us.
