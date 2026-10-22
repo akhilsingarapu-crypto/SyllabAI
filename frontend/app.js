@@ -74,6 +74,7 @@ function addSources(box, sources) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---------- Asking a question ----------
+const history = [];   // recent turns sent along with each question
 async function askServer(text) {
   if (MOCK) {
     await sleep(800);
@@ -82,10 +83,13 @@ async function askServer(text) {
   const res = await fetch(`${API_URL}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question: text }),
+    body: JSON.stringify({ question: text, history }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);
+  // Remember this turn so follow-up questions have context
+  history.push({ role: "user", content: text }, { role: "assistant", content: data.answer });
+  history.splice(0, Math.max(0, history.length - 6));
   return data;
 }
 

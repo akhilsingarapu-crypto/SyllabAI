@@ -20,6 +20,8 @@ LEARNING_STYLE = (
 SYSTEM_PROMPT = (
     "You are StudyBuddy, a friendly study helper. "
     "Answer the student's question using ONLY the notes provided. "
+    "Earlier messages are the conversation so far: use them to work out what words like "
+    "'it', 'that' or 'the other one' refer to, and ignore notes unrelated to that topic. "
     "If the notes do not contain the answer, say you couldn't find it in the notes "
     "instead of guessing. "
     "Format with plain text, short lines, '- ' bullets and **bold** for key terms; "
@@ -40,9 +42,16 @@ def _get_client():
     return _client
 
 
-def answer_question(question):
-    """RAG: find matching chunks, put them in the prompt, ask the model."""
-    hits = search(question, TOP_K)
+def answer_question(question, history=None):
+    """RAG: find matching chunks, put them in the prompt, ask the model.
+
+    history: earlier turns as [{"role": "user"|"assistant", "content": str}, ...],
+    so follow-ups like "explain that more simply" make sense.
+    """
+    history = history or []
+    # A follow-up like "why?" has no keywords, so search with the last question too.
+    last_q = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
+    hits = search(f"{last_q} {question}".strip(), TOP_K)
     if not hits:
         return "I don't have any notes yet. Upload a PDF or .txt file first.", []
 
@@ -55,6 +64,7 @@ def answer_question(question):
         model=MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
+            *history,
             {"role": "user", "content": user_prompt},
         ],
     )

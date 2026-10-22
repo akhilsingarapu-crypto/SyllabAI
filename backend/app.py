@@ -13,6 +13,7 @@ CORS(app)  # lets the frontend (opened from a file / other port) call this serve
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "upload")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED = {".pdf", ".txt"}
+MAX_HISTORY = 6  # last 3 question/answer pairs
 
 
 @app.get("/health")
@@ -70,8 +71,17 @@ def chat():
     if not question:
         return jsonify(error="Empty question"), 400
 
+    # Keep only well-formed recent turns; the client is not trusted.
+    history = [
+        {"role": m["role"], "content": m["content"][:2000]}
+        for m in data.get("history") or []
+        if isinstance(m, dict)
+        and m.get("role") in ("user", "assistant")
+        and isinstance(m.get("content"), str)
+    ][-MAX_HISTORY:]
+
     try:
-        answer, hits = answer_question(question)
+        answer, hits = answer_question(question, history)
     except Exception as err:  # bad key, no internet, rate limit...
         print("chat error:", err)
         return jsonify(error=str(err)), 500
