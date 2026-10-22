@@ -6,7 +6,7 @@ from werkzeug.utils import secure_filename
 
 from ingest import ingest_file
 from store import add_chunks, delete_source, list_sources, search
-from rag import answer_question, stream_answer
+from rag import STUDY_MODES, answer_question, stream_answer, stream_study
 
 app = Flask(__name__)
 CORS(app)  # lets the frontend (opened from a file / other port) call this server
@@ -17,15 +17,28 @@ ALLOWED = {".pdf", ".txt"}
 MAX_HISTORY = 6  # last 3 question/answer pairs
 
 
+def page_ranges(nums):
+    """[1, 2, 3, 5, 8, 9] -> '1-3, 5, 8-9'"""
+    out, nums = [], sorted(nums)
+    i = 0
+    while i < len(nums):
+        j = i
+        while j + 1 < len(nums) and nums[j + 1] == nums[j] + 1:
+            j += 1
+        out.append(str(nums[i]) if i == j else f"{nums[i]}-{nums[j]}")
+        i = j + 1
+    return ", ".join(out)
+
+
 def format_sources(hits):
-    """['Unit_3.pdf (p. 4, 5)', 'notes.txt'] - one entry per file, pages sorted."""
+    """['Unit_3.pdf (p. 4-5, 9)', 'notes.txt'] - one entry per file, pages sorted."""
     pages = {}
     for h in hits:
         pages.setdefault(h["source"], set())
         if h.get("page"):  # older uploads and .txt files have no page
             pages[h["source"]].add(h["page"])
     return [
-        f"{name} (p. {', '.join(map(str, sorted(nums)))})" if nums else name
+        f"{name} (p. {page_ranges(nums)})" if nums else name
         for name, nums in sorted(pages.items())
     ]
 
@@ -48,6 +61,10 @@ def upload():
     path = os.path.join(UPLOAD_DIR, name)
     file.save(path)
     chunks = ingest_file(path)  # Phase 4: read + split into chunks (tagged with page)
+    if not chunks:
+        os.remove(path)
+        hint = " It looks like a scan: install Tesseract OCR and upload it again." if name.lower().endswith(".pdf") else ""
+        return jsonify(error="No readable text found in this file." + hint), 422
     add_chunks(name, chunks)    # Phase 5: embed + store in ChromaDB
     return jsonify(message="saved", filename=name, chunks=len(chunks))
 
@@ -79,7 +96,7 @@ def search_notes():
 
 
 def parse_chat_request():
-    """Return (question, history) from the JSON body, or (None, None) if empty."""
+    """Return (question, history, source) from the JSON body. question is None if empty."""
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
     # Keep only well-formed recent turns; the client is not trusted.
@@ -90,17 +107,19 @@ def parse_chat_request():
         and m.get("role") in ("user", "assistant")
         and isinstance(m.get("content"), str)
     ][-MAX_HISTORY:]
-    return (question or None), history
+    source = data.get("source")
+    source = source if isinstance(source, str) and source else None  # None = all notes
+    return (question or None), history, source
 
 
 @app.post("/chat")
 def chat():
-    question, history = parse_chat_request()
+    question, history, source = parse_chat_request()
     if not question:
         return jsonify(error="Empty question"), 400
 
     try:
-        answer, hits = answer_question(question, history)
+        answer, hits = answer_question(question, history, source)
     except Exception as err:  # bad key, no internet, rate limit...
         print("chat error:", err)
         return jsonify(error=str(err)), 500
@@ -111,13 +130,29 @@ def chat():
 def chat_stream():
     """Same as /chat, but sends the answer piece by piece as JSON lines:
     {"sources": [...]} first, then {"delta": "text"} repeatedly, or {"error": "..."}."""
-    question, history = parse_chat_request()
+    question, history, source = parse_chat_request()
     if not question:
         return jsonify(error="Empty question"), 400
+    return stream_response(lambda: stream_answer(question, history, source))
 
+
+@app.post("/study/stream")
+def study_stream():
+    """Whole-file helpers. Body: {"mode": "summary" | "quiz" | "flashcards", "source": optional file}."""
+    data = request.get_json(silent=True) or {}
+    mode = data.get("mode")
+    if mode not in STUDY_MODES:
+        return jsonify(error="mode must be summary, quiz or flashcards"), 400
+    source = data.get("source")
+    source = source if isinstance(source, str) and source else None
+    return stream_response(lambda: stream_study(mode, source))
+
+
+def stream_response(start):
+    """Send start() -> (hits, pieces) as JSON lines: sources first, then text pieces."""
     def lines():
         try:
-            hits, pieces = stream_answer(question, history)
+            hits, pieces = start()
             yield json.dumps({"sources": format_sources(hits)}) + "\n"
             for piece in pieces:
                 yield json.dumps({"delta": piece}) + "\n"
@@ -129,4 +164,9 @@ def chat_stream():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    # Local defaults; a host sets PORT (and HOST=0.0.0.0) through environment variables.
+    app.run(
+        host=os.getenv("HOST", "127.0.0.1"),
+        port=int(os.getenv("PORT", "5000")),
+        debug=os.getenv("DEBUG", "1") == "1",
+    )

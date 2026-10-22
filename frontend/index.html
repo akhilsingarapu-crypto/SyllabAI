@@ -36,6 +36,18 @@
         </div>
       </div>
 
+      <div class="toolbar">
+        <label class="scope-label">Ask in
+          <select id="scope" aria-label="Which notes to use">
+            <option value="">All notes</option>
+          </select>
+        </label>
+        <button type="button" data-study="summary">Summarize</button>
+        <button type="button" data-study="quiz">Quiz me</button>
+        <button type="button" data-study="flashcards">Flashcards</button>
+        <button type="button" id="clear-chat" class="ghost">Clear chat</button>
+      </div>
+
       <form class="composer" id="chat-form">
         <textarea id="question" rows="1" placeholder="Ask about your notes…" aria-label="Your question" required></textarea>
         <button type="submit" id="send">Ask</button>

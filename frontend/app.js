@@ -12,6 +12,8 @@ const messages  = document.getElementById("messages");
 const form      = document.getElementById("chat-form");
 const question  = document.getElementById("question");
 const sendBtn   = document.getElementById("send");
+const scope     = document.getElementById("scope");
+const clearBtn  = document.getElementById("clear-chat");
 
 // ---------- Chat helpers ----------
 function addMessage(text, kind, extraClass = "") {
@@ -78,17 +80,17 @@ const history = [];   // recent turns sent along with each question
 // Reads the answer as it is written. The server sends one JSON object per line:
 // {"sources": [...]}, then many {"delta": "text"}, or {"error": "..."}.
 // onText(fullAnswerSoFar) is called after every piece; returns { answer, sources }.
-async function askServer(text, onText) {
+async function streamFrom(path, payload, onText) {
   if (MOCK) {
     await sleep(800);
-    const answer = `(Fake answer) You asked: "${text}".`;
+    const answer = `(Fake answer) You asked: "${payload.question || payload.mode}".`;
     onText(answer);
     return { answer, sources: [] };
   }
-  const res = await fetch(`${API_URL}/chat/stream`, {
+  const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question: text, history }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -117,27 +119,33 @@ async function askServer(text, onText) {
     lines.forEach(handleLine);
   }
   handleLine(buffer);
-
-  // Remember this turn so follow-up questions have context
-  history.push({ role: "user", content: text }, { role: "assistant", content: answer });
-  history.splice(0, Math.max(0, history.length - 6));
   return { answer, sources };
 }
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();               // stop the page from reloading
-  const text = question.value.trim();
-  if (!text) return;
+// Which file the questions and study buttons use ("" = all notes)
+function currentScope() { return scope.value || null; }
 
-  addMessage(text, "user");
-  question.value = "";
-  question.style.height = "auto";
-  sendBtn.disabled = true;
+async function askServer(text, onText) {
+  const reply = await streamFrom("/chat/stream", { question: text, history, source: currentScope() }, onText);
+  // Remember this turn so follow-up questions have context
+  history.push({ role: "user", content: text }, { role: "assistant", content: reply.answer });
+  history.splice(0, Math.max(0, history.length - 6));
+  return reply;
+}
+
+function studyServer(mode, onText) {
+  return streamFrom("/study/stream", { mode, source: currentScope() }, onText);
+}
+
+// Shows a user bubble, then the answer as it streams in. run(onText) must return { answer, sources }.
+async function ask(label, run) {
+  addMessage(label, "user");
+  setBusy(true);
   const waiting = addMessage("Reading your notes…", "bot", "thinking");
   let box = null;                       // the answer bubble, created when the first words arrive
 
   try {
-    const reply = await askServer(text, (partial) => {
+    const reply = await run((partial) => {
       if (!box) { waiting.remove(); box = addMessage("", "bot"); }
       box.replaceChildren();
       renderRich(box, partial);
@@ -149,9 +157,41 @@ form.addEventListener("submit", async (event) => {
     waiting.remove();
     addMessage(`Couldn't reach the server. Check that it's running, then ask again. (${err.message})`, "bot", "error");
   } finally {
-    sendBtn.disabled = false;
+    setBusy(false);
     question.focus();
   }
+}
+
+// Disable every button that talks to the model while an answer is being written
+function setBusy(busy) {
+  sendBtn.disabled = busy;
+  document.querySelectorAll("[data-study]").forEach((b) => { b.disabled = busy; });
+}
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();               // stop the page from reloading
+  const text = question.value.trim();
+  if (!text) return;
+  question.value = "";
+  question.style.height = "auto";
+  ask(text, (onText) => askServer(text, onText));
+});
+
+// Study buttons: summary / quiz / flashcards for the chosen file
+const STUDY_LABELS = { summary: "Summarize", quiz: "Quiz me", flashcards: "Make flashcards" };
+document.querySelectorAll("[data-study]").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    const mode = btn.dataset.study;
+    const where = scope.value ? ` — ${scope.value}` : " — all notes";
+    ask(STUDY_LABELS[mode] + where, (onText) => studyServer(mode, onText));
+  })
+);
+
+// Clear chat: wipes the screen and the memory the model sees
+clearBtn.addEventListener("click", () => {
+  history.length = 0;
+  messages.replaceChildren();
+  addMessage("Chat cleared. Ask me anything about your notes.", "bot");
 });
 
 // Enter sends, Shift+Enter adds a new line
@@ -209,6 +249,14 @@ function addSavedRow(file) {
   return row;
 }
 
+// Fill the "Ask in" dropdown with the stored files, keeping the current choice if it still exists
+function updateScope(files) {
+  const chosen = scope.value;
+  scope.replaceChildren(new Option("All notes", ""));
+  files.forEach((f) => scope.add(new Option(f.name, f.name)));
+  scope.value = files.some((f) => f.name === chosen) ? chosen : "";
+}
+
 async function refreshFiles() {
   if (MOCK) return;
   try {
@@ -220,6 +268,7 @@ async function refreshFiles() {
     if (empty) empty.remove();
     files.slice().reverse().forEach((f) => fileList.prepend(addSavedRow(f)));
     showEmptyIfNeeded();
+    updateScope(files);
   } catch (err) {
     // server not running yet; the list stays as it is
   }
@@ -246,7 +295,10 @@ async function uploadFile(file) {
       const body = new FormData();
       body.append("file", file);
       const res = await fetch(`${API_URL}/upload`, { method: "POST", body });
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Server returned ${res.status}`);
+      }
     }
     status.textContent = "Ready";
     status.classList.add("done");
@@ -254,7 +306,9 @@ async function uploadFile(file) {
     await refreshFiles();
   } catch (err) {
     status.textContent = "Failed";
+    status.title = err.message;          // hover to see why
     status.classList.add("error");
+    addMessage(`Couldn't add ${file.name}: ${err.message}`, "bot", "error");
   }
 }
 

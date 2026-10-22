@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 from groq import Groq
 
-from store import search
+from store import get_chunks, search
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 
@@ -43,7 +43,7 @@ def _get_client():
     return _client
 
 
-def _prepare(question, history):
+def _prepare(question, history, source=None):
     """Find matching chunks and build the model messages.
 
     Returns (fixed_reply, hits, messages). fixed_reply is a ready-made answer when
@@ -52,7 +52,7 @@ def _prepare(question, history):
     history = history or []
     # A follow-up like "why?" has no keywords, so search with the last question too.
     last_q = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
-    hits = search(f"{last_q} {question}".strip(), TOP_K)
+    hits = search(f"{last_q} {question}".strip(), TOP_K, source)
     if not hits:
         return "I don't have any notes yet. Upload a PDF or .txt file first.", [], None
     hits = [h for h in hits if h["distance"] <= MAX_DISTANCE]
@@ -70,32 +70,75 @@ def _prepare(question, history):
     return None, hits, messages
 
 
-def answer_question(question, history=None):
+def answer_question(question, history=None, source=None):
     """RAG: find matching chunks, put them in the prompt, ask the model.
 
     history: earlier turns as [{"role": "user"|"assistant", "content": str}, ...],
     so follow-ups like "explain that more simply" make sense.
     """
-    fixed, hits, messages = _prepare(question, history)
+    fixed, hits, messages = _prepare(question, history, source)
     if fixed:
         return fixed, hits
     resp = _get_client().chat.completions.create(model=MODEL, messages=messages)
     return resp.choices[0].message.content, hits
 
 
-def stream_answer(question, history=None):
+def stream_answer(question, history=None, source=None):
     """Like answer_question, but returns (hits, generator of text pieces)."""
-    fixed, hits, messages = _prepare(question, history)
+    fixed, hits, messages = _prepare(question, history, source)
     if fixed:
         return hits, iter([fixed])
+    return hits, _stream(messages)
 
-    def pieces():
-        stream = _get_client().chat.completions.create(
-            model=MODEL, messages=messages, stream=True
-        )
-        for event in stream:
-            delta = event.choices[0].delta.content if event.choices else None
-            if delta:
-                yield delta
 
-    return hits, pieces()
+def _stream(messages):
+    """Yield the model's answer in small text pieces as they are produced."""
+    stream = _get_client().chat.completions.create(
+        model=MODEL, messages=messages, stream=True
+    )
+    for event in stream:
+        delta = event.choices[0].delta.content if event.choices else None
+        if delta:
+            yield delta
+
+
+# ---- Study modes: work on a whole file instead of the few best-matching chunks ----
+STUDY_MODES = {
+    "summary": (
+        "Write a clear summary of these notes for revision. "
+        "Group it under 4-8 short bold topic lines, each followed by 2-4 '- ' bullets "
+        "with the key points. End with one line on what to revise first."
+    ),
+    "quiz": (
+        "Write 6 quiz questions from these notes, mixing short-answer and 'why/how' questions. "
+        "Number them 1 to 6 with no answers. Then write 'Answers' on its own line and give "
+        "a one or two line answer for each, numbered the same way."
+    ),
+    "flashcards": (
+        "Make 8 flashcards from these notes. For each, write a line starting with '- **Q:**' "
+        "and the question, then a line starting with '- **A:**' and a short answer. "
+        "Cover the most important terms and ideas."
+    ),
+}
+
+
+def stream_study(mode, source=None):
+    """Returns (chunks_used, generator of text pieces) for summary / quiz / flashcards."""
+    if mode not in STUDY_MODES:
+        raise ValueError(f"Unknown study mode: {mode}")
+    chunks = get_chunks(source)
+    if not chunks:
+        return [], iter(["I don't have any notes yet. Upload a PDF or .txt file first."])
+    context = "\n\n".join(f"[{c['source']}]\n{c['text']}" for c in chunks)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are SyllabAI, a friendly study helper. Use ONLY the notes provided. "
+                "Format with plain text, short lines, '- ' bullets and **bold** for key terms; "
+                "do not use tables or headings. " + LEARNING_STYLE
+            ),
+        },
+        {"role": "user", "content": f"NOTES:\n{context}\n\nTASK: {STUDY_MODES[mode]}"},
+    ]
+    return chunks, _stream(messages)

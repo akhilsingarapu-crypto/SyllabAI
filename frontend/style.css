@@ -158,6 +158,42 @@ body {
 .msg.bot.error { border-left-color: var(--ink); color: var(--margin); }
 .msg.bot.thinking { color: var(--pencil); font-style: italic; }
 
+/* ---------- Toolbar: file picker + study buttons ---------- */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem clamp(1rem, 6vw, 4rem);
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 0.85rem;
+}
+.toolbar .scope-label { display: flex; align-items: center; gap: 0.4rem; color: var(--pencil); margin-right: auto; }
+.toolbar select {
+  font: inherit;
+  max-width: 14rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--white);
+  color: var(--ink);
+}
+.toolbar button {
+  font: inherit;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.toolbar button:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+.toolbar button:disabled { opacity: 0.5; cursor: wait; }
+.toolbar button.ghost { border-color: var(--line); color: var(--pencil); }
+.toolbar select:focus-visible,
+.toolbar button:focus-visible { outline: 3px solid var(--highlight); outline-offset: 2px; }
+
 /* ---------- Composer ---------- */
 .composer {
   display: flex;

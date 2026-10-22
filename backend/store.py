@@ -41,11 +41,13 @@ def delete_source(filename):
     return len(found)
 
 
-def search(question, n=4):
-    """Return the n chunks closest in meaning to the question."""
-    if _notes.count() == 0:
+def search(question, n=4, source=None):
+    """Return the n chunks closest in meaning to the question (optionally from one file)."""
+    where = {"source": source} if source else None
+    available = len(_notes.get(where=where, include=[])["ids"])
+    if available == 0:
         return []
-    res = _notes.query(query_texts=[question], n_results=min(n, _notes.count()))
+    res = _notes.query(query_texts=[question], n_results=min(n, available), where=where)
     return [
         {"text": doc, "source": meta["source"], "chunk": meta["chunk"],
          "page": meta.get("page"), "distance": dist}
@@ -53,3 +55,26 @@ def search(question, n=4):
             res["documents"][0], res["metadatas"][0], res["distances"][0]
         )
     ]
+
+
+def get_chunks(source=None, max_chars=24000):
+    """Spread-out sample of a file's chunks (or all files), in reading order.
+
+    Used by study modes, which need the whole unit rather than the best 4 matches.
+    If everything fits in max_chars it is all returned; otherwise evenly spaced chunks.
+    """
+    where = {"source": source} if source else None
+    res = _notes.get(where=where, include=["documents", "metadatas"])
+    items = sorted(
+        (
+            {"text": d, "source": m["source"], "chunk": m["chunk"], "page": m.get("page")}
+            for d, m in zip(res["documents"], res["metadatas"])
+        ),
+        key=lambda c: (c["source"], c["chunk"]),
+    )
+    total = sum(len(c["text"]) for c in items)
+    if total > max_chars and items:
+        keep = max(1, int(len(items) * max_chars / total))
+        step = len(items) / keep
+        items = [items[int(i * step)] for i in range(keep)]
+    return items
