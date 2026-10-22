@@ -8,6 +8,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True
 
 MODEL = "openai/gpt-oss-120b"
 TOP_K = 4
+MAX_DISTANCE = 1.3  # chunks farther than this are treated as unrelated (on-topic ~0.6-1.1, off-topic 1.5+)
 
 # ---- YOUR LEARNING STYLE: edit these lines to tune how StudyBuddy explains ----
 LEARNING_STYLE = (
@@ -54,6 +55,9 @@ def answer_question(question, history=None):
     hits = search(f"{last_q} {question}".strip(), TOP_K)
     if not hits:
         return "I don't have any notes yet. Upload a PDF or .txt file first.", []
+    hits = [h for h in hits if h["distance"] <= MAX_DISTANCE]
+    if not hits:
+        return "I couldn't find that in your notes. Try rephrasing, or upload notes that cover it.", []
 
     context = "\n\n".join(
         f"[Note {i} - {h['source']}]\n{h['text']}" for i, h in enumerate(hits, 1)
