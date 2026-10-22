@@ -1,3 +1,4 @@
+import hmac
 import json
 import os
 from flask import Flask, Response, jsonify, request
@@ -19,6 +20,20 @@ UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "upload")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED = {".pdf", ".txt"}
 MAX_HISTORY = 6  # last 3 question/answer pairs
+
+
+# Optional password gate. Set APP_PASSWORD to turn it on; unset = open (local use).
+APP_PASSWORD = os.getenv("APP_PASSWORD", "")
+
+
+@app.before_request
+def require_password():
+    if not APP_PASSWORD or request.method == "OPTIONS" or request.path == "/health":
+        return None
+    sent = request.headers.get("X-Access-Key", "")
+    if not hmac.compare_digest(sent.encode(), APP_PASSWORD.encode()):
+        return jsonify(error="Password needed"), 401
+    return None
 
 
 @app.errorhandler(413)
@@ -54,7 +69,7 @@ def format_sources(hits):
 
 @app.get("/health")
 def health():
-    return jsonify(status="ok")
+    return jsonify(status="ok", auth=bool(APP_PASSWORD))  # auth: does the page need to ask for a password
 
 
 @app.post("/upload")

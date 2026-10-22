@@ -17,7 +17,7 @@ Upload your PDF / .txt notes, then ask questions answered only from those notes 
 - Upload and remove notes
 - "Ask in" picker: answer from one file or all notes
 - Summarize / Quiz me / Flashcards buttons (whole file or all notes)
-- Clear chat button
+- Clear chat and Save chat (downloads a .txt) buttons
 - Scanned PDFs are read with OCR if Tesseract is installed
 - Follow-up questions (remembers the last 3 turns)
 - Answers stream in as they are written
@@ -26,3 +26,12 @@ Upload your PDF / .txt notes, then ask questions answered only from those notes 
   (tune `MAX_DISTANCE` in `backend/rag.py`)
 
 Deploy plan: see `DEPLOY.md`.
+
+## Password (optional)
+
+Set `APP_PASSWORD` before starting the server and the page asks for it first:
+`set APP_PASSWORD=mypass` (Windows cmd) then `python app.py`. Leave it unset for local use.
+
+## Tests
+
+`python -m unittest discover -s tests -v` (does not call the AI or touch your notes).

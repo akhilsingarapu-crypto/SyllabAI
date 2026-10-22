@@ -45,6 +45,7 @@
         <button type="button" data-study="summary">Summarize</button>
         <button type="button" data-study="quiz">Quiz me</button>
         <button type="button" data-study="flashcards">Flashcards</button>
+        <button type="button" id="export-chat" class="ghost">Save chat</button>
         <button type="button" id="clear-chat" class="ghost">Clear chat</button>
       </div>
 
@@ -54,6 +55,15 @@
       </form>
     </main>
 
+  </div>
+  <!-- Password box: hidden unless the server asks for a password -->
+  <div class="login" id="login" hidden>
+    <form id="login-form">
+      <h2>Enter password</h2>
+      <input type="password" id="login-key" aria-label="Password" autocomplete="current-password" required>
+      <button type="submit">Open</button>
+      <p class="login-error" id="login-error" role="alert"></p>
+    </form>
   </div>
   <script src="app.js"></script>
 </body>

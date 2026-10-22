@@ -4,6 +4,20 @@
 const MOCK = false;
 const API_URL = "http://127.0.0.1:5000";
 
+// ---------- Talking to the server (adds the password when one is set) ----------
+const KEY_NAME = "syllabai-key";
+function getKey() { try { return sessionStorage.getItem(KEY_NAME) || ""; } catch { return ""; } }
+function setKey(k) { try { sessionStorage.setItem(KEY_NAME, k); } catch { /* storage blocked: ask again next time */ } }
+
+async function apiFetch(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  const key = getKey();
+  if (key) headers["X-Access-Key"] = key;
+  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  if (res.status === 401) { showLogin(); throw new Error("Password needed"); }
+  return res;
+}
+
 // ---------- Grab the page elements we need ----------
 const dropzone  = document.getElementById("dropzone");
 const fileInput = document.getElementById("file-input");
@@ -14,6 +28,11 @@ const question  = document.getElementById("question");
 const sendBtn   = document.getElementById("send");
 const scope     = document.getElementById("scope");
 const clearBtn  = document.getElementById("clear-chat");
+const exportBtn = document.getElementById("export-chat");
+const loginBox  = document.getElementById("login");
+const loginForm = document.getElementById("login-form");
+const loginKey  = document.getElementById("login-key");
+const loginErr  = document.getElementById("login-error");
 
 // ---------- Chat helpers ----------
 function addMessage(text, kind, extraClass = "") {
@@ -87,7 +106,7 @@ async function streamFrom(path, payload, onText) {
     onText(answer);
     return { answer, sources: [] };
   }
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await apiFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -260,7 +279,7 @@ function updateScope(files) {
 async function refreshFiles() {
   if (MOCK) return;
   try {
-    const res = await fetch(`${API_URL}/files`);
+    const res = await apiFetch("/files");
     if (!res.ok) throw new Error();
     const { files } = await res.json();
     fileList.querySelectorAll("[data-saved]").forEach((r) => r.remove());
@@ -277,7 +296,7 @@ async function refreshFiles() {
 async function removeFile(name, button) {
   button.disabled = true;
   try {
-    const res = await fetch(`${API_URL}/files/${encodeURIComponent(name)}`, { method: "DELETE" });
+    const res = await apiFetch(`/files/${encodeURIComponent(name)}`, { method: "DELETE" });
     if (!res.ok) throw new Error(`Server returned ${res.status}`);
     await refreshFiles();
   } catch (err) {
@@ -294,7 +313,7 @@ async function uploadFile(file) {
     } else {
       const body = new FormData();
       body.append("file", file);
-      const res = await fetch(`${API_URL}/upload`, { method: "POST", body });
+      const res = await apiFetch("/upload", { method: "POST", body });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `Server returned ${res.status}`);
@@ -338,4 +357,51 @@ fileInput.addEventListener("change", () => {
 );
 dropzone.addEventListener("drop", (e) => handleFiles(e.dataTransfer.files));
 
-refreshFiles();                         // show notes already stored from earlier visits
+// ---------- Password box (only appears when the server has APP_PASSWORD set) ----------
+function showLogin() {
+  setKey("");
+  loginBox.hidden = false;
+  loginKey.value = "";
+  loginKey.focus();
+}
+
+loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  setKey(loginKey.value);
+  loginErr.textContent = "";
+  try {
+    const res = await apiFetch("/files");   // any protected route works as a password check
+    if (!res.ok) throw new Error();
+    loginBox.hidden = true;
+    refreshFiles();
+  } catch {
+    loginErr.textContent = "Wrong password. Try again.";
+  }
+});
+
+// ---------- Export the chat as a text file ----------
+exportBtn.addEventListener("click", () => {
+  const lines = [...messages.querySelectorAll(".msg:not(.thinking)")].map((m) => {
+    const who = m.classList.contains("user") ? "You" : "SyllabAI";
+    const body = [...m.children].map((c) => c.innerText.trim()).filter(Boolean).join("\n");
+    return `${who}:\n${body}`;
+  });
+  if (lines.length <= 1) return;           // only the greeting: nothing worth saving
+  const blob = new Blob([lines.join("\n\n")], { type: "text/plain" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "syllabai-chat.txt";
+  link.click();
+  URL.revokeObjectURL(link.href);
+});
+
+// ---------- Start ----------
+(async function start() {
+  if (!MOCK) {
+    try {
+      const res = await fetch(`${API_URL}/health`);
+      if ((await res.json()).auth && !getKey()) { showLogin(); return; }
+    } catch { /* server down: the notes list will just stay empty */ }
+  }
+  refreshFiles();                       // show notes already stored from earlier visits
+})();
