@@ -5,13 +5,13 @@ CHUNK_SIZE = 800     # characters per chunk
 CHUNK_OVERLAP = 150  # characters shared between neighbouring chunks
 
 
-def extract_text(path):
-    """Return all the text in a .pdf or .txt file."""
+def extract_pages(path):
+    """Return [(page_number, text)] for a .pdf, or [(None, text)] for a .txt file."""
     if path.lower().endswith(".pdf"):
         with pymupdf.open(path) as doc:
-            return "\n".join(page.get_text() for page in doc)
+            return [(i, page.get_text()) for i, page in enumerate(doc, 1)]
     with open(path, encoding="utf-8", errors="ignore") as f:
-        return f.read()
+        return [(None, f.read())]
 
 
 def chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
@@ -26,12 +26,17 @@ def chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
 
 
 def ingest_file(path):
-    chunks = chunk_text(extract_text(path))
+    """Return chunks as [{"text": str, "page": int | None}]. Chunks never span pages."""
+    chunks = [
+        {"text": piece, "page": page}
+        for page, text in extract_pages(path)
+        for piece in chunk_text(text)
+    ]
     print(f"\n=== {os.path.basename(path)}: {len(chunks)} chunks ===")
     for i, chunk in enumerate(chunks, 1):
         # Windows terminals can't show every symbol (PDF bullets etc.); replace instead of crashing
-        safe = chunk.encode("ascii", "replace").decode("ascii")
-        print(f"--- chunk {i} ({len(chunk)} chars) ---\n{safe}\n")
+        safe = chunk["text"].encode("ascii", "replace").decode("ascii")
+        print(f"--- chunk {i} (page {chunk['page']}, {len(chunk['text'])} chars) ---\n{safe}\n")
     return chunks
 
 

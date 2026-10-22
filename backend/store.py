@@ -16,8 +16,12 @@ def add_chunks(filename, chunks):
         return
     _notes.add(
         ids=[f"{filename}::{i}" for i in range(len(chunks))],
-        documents=chunks,
-        metadatas=[{"source": filename, "chunk": i} for i in range(len(chunks))],
+        documents=[c["text"] for c in chunks],
+        # Chroma metadata can't hold None, so .txt files simply have no "page" key
+        metadatas=[
+            {"source": filename, "chunk": i, **({"page": c["page"]} if c["page"] else {})}
+            for i, c in enumerate(chunks)
+        ],
     )
 
 
@@ -43,7 +47,8 @@ def search(question, n=4):
         return []
     res = _notes.query(query_texts=[question], n_results=min(n, _notes.count()))
     return [
-        {"text": doc, "source": meta["source"], "chunk": meta["chunk"], "distance": dist}
+        {"text": doc, "source": meta["source"], "chunk": meta["chunk"],
+         "page": meta.get("page"), "distance": dist}
         for doc, meta, dist in zip(
             res["documents"][0], res["metadatas"][0], res["distances"][0]
         )

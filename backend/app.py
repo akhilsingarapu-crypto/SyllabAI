@@ -16,6 +16,19 @@ ALLOWED = {".pdf", ".txt"}
 MAX_HISTORY = 6  # last 3 question/answer pairs
 
 
+def format_sources(hits):
+    """['Unit_3.pdf (p. 4, 5)', 'notes.txt'] - one entry per file, pages sorted."""
+    pages = {}
+    for h in hits:
+        pages.setdefault(h["source"], set())
+        if h.get("page"):  # older uploads and .txt files have no page
+            pages[h["source"]].add(h["page"])
+    return [
+        f"{name} (p. {', '.join(map(str, sorted(nums)))})" if nums else name
+        for name, nums in sorted(pages.items())
+    ]
+
+
 @app.get("/health")
 def health():
     return jsonify(status="ok")
@@ -33,7 +46,7 @@ def upload():
 
     path = os.path.join(UPLOAD_DIR, name)
     file.save(path)
-    chunks = ingest_file(path)  # Phase 4: read + split into chunks
+    chunks = ingest_file(path)  # Phase 4: read + split into chunks (tagged with page)
     add_chunks(name, chunks)    # Phase 5: embed + store in ChromaDB
     return jsonify(message="saved", filename=name, chunks=len(chunks))
 
@@ -85,8 +98,7 @@ def chat():
     except Exception as err:  # bad key, no internet, rate limit...
         print("chat error:", err)
         return jsonify(error=str(err)), 500
-    sources = sorted({h["source"] for h in hits})
-    return jsonify(answer=answer, sources=sources)
+    return jsonify(answer=answer, sources=format_sources(hits))
 
 
 if __name__ == "__main__":
