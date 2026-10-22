@@ -43,7 +43,7 @@ def _get_client():
     return _client
 
 
-def _prepare(question, history, source=None):
+def _prepare(owner, question, history, source=None):
     """Find matching chunks and build the model messages.
 
     Returns (fixed_reply, hits, messages). fixed_reply is a ready-made answer when
@@ -52,7 +52,7 @@ def _prepare(question, history, source=None):
     history = history or []
     # A follow-up like "why?" has no keywords, so search with the last question too.
     last_q = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
-    hits = search(f"{last_q} {question}".strip(), TOP_K, source)
+    hits = search(owner, f"{last_q} {question}".strip(), TOP_K, source)
     if not hits:
         return "I don't have any notes yet. Upload a PDF or .txt file first.", [], None
     hits = [h for h in hits if h["distance"] <= MAX_DISTANCE]
@@ -70,22 +70,22 @@ def _prepare(question, history, source=None):
     return None, hits, messages
 
 
-def answer_question(question, history=None, source=None):
+def answer_question(owner, question, history=None, source=None):
     """RAG: find matching chunks, put them in the prompt, ask the model.
 
     history: earlier turns as [{"role": "user"|"assistant", "content": str}, ...],
     so follow-ups like "explain that more simply" make sense.
     """
-    fixed, hits, messages = _prepare(question, history, source)
+    fixed, hits, messages = _prepare(owner, question, history, source)
     if fixed:
         return fixed, hits
     resp = _get_client().chat.completions.create(model=MODEL, messages=messages)
     return resp.choices[0].message.content, hits
 
 
-def stream_answer(question, history=None, source=None):
+def stream_answer(owner, question, history=None, source=None):
     """Like answer_question, but returns (hits, generator of text pieces)."""
-    fixed, hits, messages = _prepare(question, history, source)
+    fixed, hits, messages = _prepare(owner, question, history, source)
     if fixed:
         return hits, iter([fixed])
     return hits, _stream(messages)
@@ -122,11 +122,11 @@ STUDY_MODES = {
 }
 
 
-def stream_study(mode, source=None):
+def stream_study(owner, mode, source=None):
     """Returns (chunks_used, generator of text pieces) for summary / quiz / flashcards."""
     if mode not in STUDY_MODES:
         raise ValueError(f"Unknown study mode: {mode}")
-    chunks = get_chunks(source)
+    chunks = get_chunks(owner, source)
     if not chunks:
         return [], iter(["I don't have any notes yet. Upload a PDF or .txt file first."])
     context = "\n\n".join(f"[{c['source']}]\n{c['text']}" for c in chunks)

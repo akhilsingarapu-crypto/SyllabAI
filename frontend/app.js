@@ -5,17 +5,19 @@ const MOCK = false;
 // Opened as a file: talk to the local server. Served by the server itself (e.g. on Render): same address.
 const API_URL = location.protocol === "file:" ? "http://127.0.0.1:5000" : location.origin;
 
-// ---------- Talking to the server (adds the password when one is set) ----------
-const KEY_NAME = "syllabai-key";
-function getKey() { try { return sessionStorage.getItem(KEY_NAME) || ""; } catch { return ""; } }
-function setKey(k) { try { sessionStorage.setItem(KEY_NAME, k); } catch { /* storage blocked: ask again next time */ } }
+// ---------- Talking to the server (sends your sign-in token) ----------
+const TOKEN_KEY = "syllabai-token";
+function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } }
+function setToken(t) {
+  try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch { /* storage blocked: sign in again next visit */ }
+}
 
 async function apiFetch(path, options = {}) {
   const headers = { ...(options.headers || {}) };
-  const key = getKey();
-  if (key) headers["X-Access-Key"] = key;
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
-  if (res.status === 401) { showLogin(); throw new Error("Password needed"); }
+  if (res.status === 401) { showAuth(); throw new Error("SIGNED_OUT"); }
   return res;
 }
 
@@ -30,10 +32,15 @@ const sendBtn   = document.getElementById("send");
 const scope     = document.getElementById("scope");
 const clearBtn  = document.getElementById("clear-chat");
 const exportBtn = document.getElementById("export-chat");
-const loginBox  = document.getElementById("login");
-const loginForm = document.getElementById("login-form");
-const loginKey  = document.getElementById("login-key");
-const loginErr  = document.getElementById("login-error");
+const authBox    = document.getElementById("auth");
+const authForm   = document.getElementById("auth-form");
+const authName   = document.getElementById("auth-name");
+const authEmail  = document.getElementById("auth-email");
+const authPass   = document.getElementById("auth-password");
+const authError  = document.getElementById("auth-error");
+const authSubmit = document.getElementById("auth-submit");
+const profileBtn = document.getElementById("profile-btn");
+const profileBox = document.getElementById("profile");
 const chatList  = document.getElementById("chat-list");
 const newChatBtn = document.getElementById("new-chat");
 const attachBtn   = document.getElementById("attach");
@@ -101,7 +108,7 @@ function addSources(box, sources) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---------- Separate chats (saved in this browser only) ----------
-const CHATS_KEY = "syllabai-chats";
+const chatsKey = () => `syllabai-chats-${user.id}`;   // one saved set of chats per account
 const MAX_CHATS = 30;
 const GREETING = "Hi! Add your notes on the left, then ask me anything about them.";
 let chats = [];        // newest first: { id, title, messages: [{ kind, text, sources }], history: [...] }
@@ -110,13 +117,13 @@ let busy = false;      // true while an answer is being written; chats can't be 
 
 function loadChats() {
   try {
-    const saved = JSON.parse(localStorage.getItem(CHATS_KEY));
+    const saved = JSON.parse(localStorage.getItem(chatsKey()));
     if (saved && Array.isArray(saved.chats)) { chats = saved.chats; activeId = saved.activeId; }
   } catch { /* nothing saved yet, or storage blocked: start fresh */ }
 }
 
 function saveChats() {
-  try { localStorage.setItem(CHATS_KEY, JSON.stringify({ chats, activeId })); } catch { /* storage full or blocked */ }
+  try { localStorage.setItem(chatsKey(), JSON.stringify({ chats, activeId })); } catch { /* storage full or blocked */ }
 }
 
 const activeChat = () => chats.find((c) => c.id === activeId);
@@ -527,26 +534,161 @@ if (!SpeechRec) {
 );
 dropzone.addEventListener("drop", (e) => handleFiles(e.dataTransfer.files));
 
-// ---------- Password box (only appears when the server has APP_PASSWORD set) ----------
-function showLogin() {
-  setKey("");
-  loginBox.hidden = false;
-  loginKey.value = "";
-  loginKey.focus();
+// ---------- Accounts: sign in / create account ----------
+let user = null;                        // { id, email, name } while signed in
+let authMode = "login";                 // "login" or "signup"
+
+// Sign-in and sign-up have no token yet, so they use plain fetch instead of apiFetch
+async function authRequest(path, body) {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);
+  return data;
 }
 
-loginForm.addEventListener("submit", async (event) => {
+function setAuthMode(mode) {
+  authMode = mode;
+  const signup = mode === "signup";
+  document.getElementById("tab-login").setAttribute("aria-selected", String(!signup));
+  document.getElementById("tab-signup").setAttribute("aria-selected", String(signup));
+  document.getElementById("name-row").hidden = !signup;
+  document.getElementById("auth-hint").hidden = !signup;
+  authName.required = signup;
+  authPass.autocomplete = signup ? "new-password" : "current-password";
+  authSubmit.textContent = signup ? "Create account" : "Sign in";
+  authError.textContent = "";
+}
+document.getElementById("tab-login").addEventListener("click", () => setAuthMode("login"));
+document.getElementById("tab-signup").addEventListener("click", () => setAuthMode("signup"));
+
+authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  setKey(loginKey.value);
-  loginErr.textContent = "";
+  authError.textContent = "";
+  authSubmit.disabled = true;
   try {
-    const res = await apiFetch("/files");   // any protected route works as a password check
-    if (!res.ok) throw new Error();
-    loginBox.hidden = true;
-    refreshFiles();
-  } catch {
-    loginErr.textContent = "Wrong password. Try again.";
+    const signup = authMode === "signup";
+    const data = await authRequest(signup ? "/auth/signup" : "/auth/login", {
+      name: authName.value, email: authEmail.value, password: authPass.value,
+    });
+    setToken(data.token);
+    authForm.reset();
+    enterApp(data.user);
+  } catch (err) {
+    authError.textContent = err.message === "Failed to fetch" ? "Can't reach the server. Check that it's running." : err.message;
+  } finally {
+    authSubmit.disabled = false;
   }
+});
+
+// Show the signed-in app for this user
+function enterApp(account) {
+  user = account;
+  authBox.hidden = true;
+  profileBox.hidden = true;
+  profileBtn.hidden = false;
+  document.getElementById("profile-name").textContent = user.name;
+  document.getElementById("avatar").textContent = (user.name.trim()[0] || "?").toUpperCase();
+  chats = [];
+  activeId = null;
+  loadChats();                          // this account's saved chats
+  if (!chats.length) createChat();
+  else if (!activeChat()) activeId = chats[0].id;
+  renderChat();
+  renderChatList();
+  refreshFiles();                       // this account's notes
+}
+
+// Show the sign-in screen and forget everything about the previous user
+function showAuth(forgetToken = true) {
+  if (forgetToken) setToken("");
+  user = null;
+  chats = [];
+  activeId = null;
+  messages.replaceChildren();
+  chatList.replaceChildren();
+  fileList.replaceChildren();
+  updateScope([]);
+  showEmptyIfNeeded();
+  profileBtn.hidden = true;
+  profileBox.hidden = true;
+  authBox.hidden = false;
+  setAuthMode("login");
+  authEmail.focus();
+}
+
+// ---------- Profile ----------
+function setMsg(el, text, ok) {
+  el.textContent = text;
+  el.className = "form-msg " + (text ? (ok ? "ok" : "bad") : "");
+}
+
+function openProfile() {
+  document.getElementById("profile-email").textContent = user.email;
+  document.getElementById("prof-name").value = user.name;
+  ["name-msg", "pw-msg", "del-msg"].forEach((id) => setMsg(document.getElementById(id), ""));
+  ["pw-form", "del-form"].forEach((id) => document.getElementById(id).reset());
+  profileBox.hidden = false;
+  document.getElementById("prof-name").focus();
+}
+const closeProfile = () => { profileBox.hidden = true; profileBtn.focus(); };
+
+profileBtn.addEventListener("click", openProfile);
+document.getElementById("profile-close").addEventListener("click", closeProfile);
+profileBox.addEventListener("click", (e) => { if (e.target === profileBox) closeProfile(); });   // click outside the card
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !profileBox.hidden) closeProfile(); });
+
+// Run an API call for a profile form; shows the result (or the server's reason) under the form
+async function profileCall(msgId, path, method, body, onOk) {
+  const msg = document.getElementById(msgId);
+  setMsg(msg, "");
+  try {
+    const res = await apiFetch(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);
+    onOk(data, msg);
+  } catch (err) {
+    if (err.message !== "SIGNED_OUT") setMsg(msg, err.message, false);
+  }
+}
+
+document.getElementById("name-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  profileCall("name-msg", "/auth/profile", "PATCH", { name: document.getElementById("prof-name").value }, (data, msg) => {
+    user = data.user;
+    document.getElementById("profile-name").textContent = user.name;
+    document.getElementById("avatar").textContent = (user.name.trim()[0] || "?").toUpperCase();
+    setMsg(msg, "Saved.", true);
+  });
+});
+
+document.getElementById("pw-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  profileCall("pw-msg", "/auth/password", "POST", {
+    current: document.getElementById("pw-current").value,
+    new: document.getElementById("pw-new").value,
+  }, (_data, msg) => {
+    document.getElementById("pw-form").reset();
+    setMsg(msg, "Password changed. Your other devices were signed out.", true);
+  });
+});
+
+document.getElementById("signout").addEventListener("click", async () => {
+  try { await apiFetch("/auth/logout", { method: "POST" }); } catch { /* already signed out, or server down */ }
+  showAuth();
+});
+
+document.getElementById("del-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!window.confirm("Delete your account, notes and uploaded files? This can't be undone.")) return;
+  const oldKey = chatsKey();
+  profileCall("del-msg", "/auth/account", "DELETE", { password: document.getElementById("del-password").value }, () => {
+    try { localStorage.removeItem(oldKey); } catch { /* ignore */ }
+    showAuth();
+  });
 });
 
 // ---------- Export the chat as a text file ----------
@@ -565,19 +707,16 @@ exportBtn.addEventListener("click", () => {
   URL.revokeObjectURL(link.href);
 });
 
-// ---------- Start ----------
-loadChats();
-if (!chats.length) createChat();
-else if (!activeChat()) activeId = chats[0].id;
-renderChat();
-renderChatList();
-
+// ---------- Start: sign in with the saved token, or show the sign-in screen ----------
 (async function start() {
-  if (!MOCK) {
-    try {
-      const res = await fetch(`${API_URL}/health`);
-      if ((await res.json()).auth && !getKey()) { showLogin(); return; }
-    } catch { /* server down: the notes list will just stay empty */ }
+  if (MOCK) { enterApp({ id: 0, name: "Demo", email: "demo@example.com" }); return; }
+  if (!getToken()) { showAuth(); return; }
+  try {
+    const res = await apiFetch("/auth/me");
+    enterApp((await res.json()).user);
+  } catch (err) {
+    if (err.message === "SIGNED_OUT") return;          // apiFetch already showed the sign-in screen
+    showAuth(false);                                   // server unreachable: keep the token for next time
+    authError.textContent = "Can't reach the server. Check that it's running, then reload.";
   }
-  refreshFiles();                       // show notes already stored from earlier visits
 })();

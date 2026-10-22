@@ -5,3 +5,7 @@ upload/
 uploads/
 __pycache__/
 *.pyc
+
+# user accounts and sessions: never commit
+app.db
+*.db

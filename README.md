@@ -29,10 +29,16 @@ Upload your PDF / .txt notes, then ask questions answered only from those notes 
 
 Deploy plan: see `DEPLOY.md`.
 
-## Password (optional)
+## Accounts
 
-Set `APP_PASSWORD` before starting the server and the page asks for it first:
-`set APP_PASSWORD=mypass` (Windows cmd) then `python app.py`. Leave it unset for local use.
+Everyone signs up with a name, email and password (8+ characters) and sees only their own notes.
+Passwords are stored as salted hashes in `app.db` (never commit it; it is in `.gitignore`).
+Sign-in lasts 30 days. The profile page (click your name, top left) lets you change your name and
+password, sign out, or delete the account and all its notes.
+
+- To stop new people registering, set `ALLOW_SIGNUP=0` and restart (existing users can still sign in).
+- Five wrong passwords for one email from one address locks it for 15 minutes.
+- Chats are saved in the browser (per account), not on the server.
 
 ## Tests
 

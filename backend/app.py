@@ -1,10 +1,10 @@
-import hmac
 import json
 import os
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, g, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
+from auth import auth_bp, current_user, init_db
 from ingest import SUPPORTED, ingest_file
 from store import DATA_DIR, add_chunks, delete_source, list_sources, search
 from rag import STUDY_MODES, answer_question, stream_answer, stream_study
@@ -23,20 +23,32 @@ ALLOWED = set(SUPPORTED)
 MAX_HISTORY = 6  # last 3 question/answer pairs
 
 
-# Optional password gate. Set APP_PASSWORD to turn it on; unset = open (local use).
-APP_PASSWORD = os.getenv("APP_PASSWORD", "")
+init_db()
+app.register_blueprint(auth_bp)
+
+# Everything except the page itself, /health and sign-up / sign-in needs a signed-in user.
+OPEN_PATHS = {"/", "/health", "/index.html", "/app.js", "/style.css", "/auth/signup", "/auth/login"}
 
 
 @app.before_request
-def require_password():
-    # The page itself must load so it can show the password box; the data routes stay locked.
-    open_paths = {"/", "/health", "/index.html", "/app.js", "/style.css"}
-    if not APP_PASSWORD or request.method == "OPTIONS" or request.path in open_paths:
+def require_login():
+    if request.method == "OPTIONS" or request.path in OPEN_PATHS:
         return None
-    sent = request.headers.get("X-Access-Key", "")
-    if not hmac.compare_digest(sent.encode(), APP_PASSWORD.encode()):
-        return jsonify(error="Password needed"), 401
+    g.user = current_user()
+    if g.user is None:
+        return jsonify(error="Please sign in."), 401
     return None
+
+
+def owner_id():
+    """Who the notes belong to: the signed-in user's id, as text."""
+    return str(g.user["id"])
+
+
+def user_upload_dir():
+    path = os.path.join(UPLOAD_DIR, owner_id())
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 @app.errorhandler(413)
@@ -84,7 +96,7 @@ def frontend_file():
 
 @app.get("/health")
 def health():
-    return jsonify(status="ok", auth=bool(APP_PASSWORD))  # auth: does the page need to ask for a password
+    return jsonify(status="ok")
 
 
 @app.post("/upload")
@@ -97,7 +109,7 @@ def upload():
     if os.path.splitext(name)[1].lower() not in ALLOWED:
         return jsonify(error="This file type isn't supported. Try PDF, Word, PowerPoint, Excel, text, web page, ebook or a photo."), 400
 
-    path = os.path.join(UPLOAD_DIR, name)
+    path = os.path.join(user_upload_dir(), name)
     file.save(path)
     chunks = ingest_file(path)  # Phase 4: read + split into chunks (tagged with page)
     if not chunks:
@@ -105,20 +117,20 @@ def upload():
         scanned = name.lower().endswith((".pdf", ".png", ".jpg", ".jpeg"))
         hint = " Scans and photos need OCR (Tesseract), which this server may not have, or the picture is too unclear." if scanned else ""
         return jsonify(error="No readable text found in this file." + hint), 422
-    add_chunks(name, chunks)    # Phase 5: embed + store in ChromaDB
+    add_chunks(owner_id(), name, chunks)    # Phase 5: embed + store in ChromaDB
     return jsonify(message="saved", filename=name, chunks=len(chunks))
 
 
 @app.get("/files")
 def files():
-    return jsonify(files=list_sources())
+    return jsonify(files=list_sources(owner_id()))
 
 
 @app.delete("/files/<path:filename>")
 def delete_file(filename):
     name = secure_filename(filename)  # same cleaning as upload, blocks ../ tricks
-    removed = delete_source(name)
-    path = os.path.join(UPLOAD_DIR, name)
+    removed = delete_source(owner_id(), name)
+    path = os.path.join(user_upload_dir(), name)
     if os.path.isfile(path):
         os.remove(path)
     elif not removed:
@@ -132,7 +144,7 @@ def search_notes():
     q = (request.args.get("q") or "").strip()
     if not q:
         return jsonify(error="Add ?q=your+question"), 400
-    return jsonify(results=search(q))
+    return jsonify(results=search(owner_id(), q))
 
 
 def parse_chat_request():
@@ -159,7 +171,7 @@ def chat():
         return jsonify(error="Empty question"), 400
 
     try:
-        answer, hits = answer_question(question, history, source)
+        answer, hits = answer_question(owner_id(), question, history, source)
     except Exception as err:  # bad key, no internet, rate limit...
         print("chat error:", err)
         return jsonify(error=str(err)), 500
@@ -173,7 +185,8 @@ def chat_stream():
     question, history, source = parse_chat_request()
     if not question:
         return jsonify(error="Empty question"), 400
-    return stream_response(lambda: stream_answer(question, history, source))
+    owner = owner_id()   # read now: the response is produced after this request has ended
+    return stream_response(lambda: stream_answer(owner, question, history, source))
 
 
 @app.post("/study/stream")
@@ -185,7 +198,8 @@ def study_stream():
         return jsonify(error="mode must be summary, quiz or flashcards"), 400
     source = data.get("source")
     source = source if isinstance(source, str) and source else None
-    return stream_response(lambda: stream_study(mode, source))
+    owner = owner_id()
+    return stream_response(lambda: stream_study(owner, mode, source))
 
 
 def stream_response(start):

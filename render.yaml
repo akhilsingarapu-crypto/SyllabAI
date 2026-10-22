@@ -18,8 +18,8 @@ services:
         value: /var/data
       - key: GROQ_API_KEY
         sync: false        # you type this in the Render dashboard; it is never stored in git
-      - key: APP_PASSWORD
-        sync: false        # the password people must enter to use the site
+      - key: ALLOW_SIGNUP
+        value: "1"         # set to 0 to close registration
     disk:
       name: notes
       mountPath: /var/data

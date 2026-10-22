@@ -7,7 +7,8 @@ import sys
 import tempfile
 import unittest
 
-os.environ["APP_PASSWORD"] = "secret-for-tests"
+# Tests use a throwaway data folder, never your real notes or users.
+os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="syllabai-test-")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 import pymupdf  # noqa: E402
@@ -122,39 +123,102 @@ class SourceFormatTests(unittest.TestCase):
         self.assertEqual(app_module.format_sources(hits), ["a.pdf (p. 2-3)", "b.txt"])
 
 
-class PasswordTests(unittest.TestCase):
+class AuthTests(unittest.TestCase):
+    """Accounts, sessions, profile and the wall between users' notes."""
+
     def setUp(self):
         self.client = app_module.app.test_client()
 
-    def test_health_is_open_and_reports_auth(self):
-        res = self.client.get("/health")
-        self.assertEqual(res.status_code, 200)
-        self.assertTrue(res.get_json()["auth"])
+    def signup(self, email, name="Test User", password="correct-horse"):
+        return self.client.post("/auth/signup", json={"name": name, "email": email, "password": password})
 
-    def test_page_loads_without_password_so_login_box_can_show(self):
-        for path in ["/", "/app.js", "/style.css"]:
+    @staticmethod
+    def auth(token):
+        return {"Authorization": f"Bearer {token}"}
+
+    def make_user(self, email):
+        res = self.signup(email)
+        self.assertEqual(res.status_code, 201)
+        return res.get_json()["token"]
+
+    def test_page_and_health_are_open(self):
+        for path in ["/", "/app.js", "/style.css", "/health"]:
             self.assertEqual(self.client.get(path).status_code, 200, path)
 
-    def test_protected_routes_need_the_key(self):
-        for method, path in [("get", "/files"), ("post", "/chat"), ("delete", "/files/x.pdf")]:
-            res = getattr(self.client, method)(path)
-            self.assertEqual(res.status_code, 401, path)
+    def test_data_routes_need_sign_in(self):
+        for method, path in [("get", "/files"), ("post", "/chat"), ("delete", "/files/x.pdf"), ("get", "/auth/me")]:
+            self.assertEqual(getattr(self.client, method)(path).status_code, 401, path)
+        bad = self.client.get("/files", headers=self.auth("not-a-real-token"))
+        self.assertEqual(bad.status_code, 401)
 
-    def test_wrong_key_rejected(self):
-        res = self.client.get("/files", headers={"X-Access-Key": "nope"})
-        self.assertEqual(res.status_code, 401)
+    def test_signup_validation(self):
+        self.assertEqual(self.signup("a@b.co", password="short").status_code, 400)
+        self.assertEqual(self.signup("not-an-email").status_code, 400)
+        self.assertEqual(self.signup("x@y.co", name="  ").status_code, 400)
 
-    def test_empty_question_with_right_key(self):
-        res = self.client.post(
-            "/chat", json={"question": "  "}, headers={"X-Access-Key": "secret-for-tests"}
+    def test_duplicate_email_and_login(self):
+        self.make_user("dup@example.com")
+        self.assertEqual(self.signup("DUP@example.com").status_code, 409)   # email match ignores case
+        ok = self.client.post("/auth/login", json={"email": "dup@example.com", "password": "correct-horse"})
+        self.assertEqual(ok.status_code, 200)
+        wrong = self.client.post("/auth/login", json={"email": "dup@example.com", "password": "nope-nope"})
+        self.assertEqual(wrong.status_code, 401)
+        ghost = self.client.post("/auth/login", json={"email": "nobody@example.com", "password": "whatever1"})
+        self.assertEqual(ghost.status_code, 401)
+
+    def test_me_and_logout(self):
+        token = self.make_user("me@example.com")
+        me = self.client.get("/auth/me", headers=self.auth(token))
+        self.assertEqual(me.get_json()["user"]["email"], "me@example.com")
+        self.client.post("/auth/logout", headers=self.auth(token))
+        self.assertEqual(self.client.get("/auth/me", headers=self.auth(token)).status_code, 401)
+
+    def test_profile_name_and_password_change(self):
+        token = self.make_user("prof@example.com")
+        h = self.auth(token)
+        res = self.client.patch("/auth/profile", json={"name": "New Name"}, headers=h)
+        self.assertEqual(res.get_json()["user"]["name"], "New Name")
+        bad = self.client.post("/auth/password", json={"current": "wrong-one", "new": "brand-new-pass"}, headers=h)
+        self.assertEqual(bad.status_code, 400)
+        good = self.client.post("/auth/password", json={"current": "correct-horse", "new": "brand-new-pass"}, headers=h)
+        self.assertEqual(good.status_code, 200)
+        relog = self.client.post("/auth/login", json={"email": "prof@example.com", "password": "brand-new-pass"})
+        self.assertEqual(relog.status_code, 200)
+
+    def test_notes_are_private_to_each_user(self):
+        a = self.make_user("alice@example.com")
+        b = self.make_user("bob@example.com")
+        from io import BytesIO
+        up = self.client.post(
+            "/upload",
+            data={"file": (BytesIO(b"alice private zebra notes"), "secret.txt")},
+            headers=self.auth(a),
+            content_type="multipart/form-data",
         )
-        self.assertEqual(res.status_code, 400)
+        self.assertEqual(up.status_code, 200)
+        self.assertEqual([f["name"] for f in self.client.get("/files", headers=self.auth(a)).get_json()["files"]], ["secret.txt"])
+        self.assertEqual(self.client.get("/files", headers=self.auth(b)).get_json()["files"], [])
+        hits_b = self.client.get("/search?q=zebra", headers=self.auth(b)).get_json()["results"]
+        self.assertEqual(hits_b, [])
+        self.assertEqual(self.client.delete("/files/secret.txt", headers=self.auth(b)).status_code, 404)
+        self.assertEqual(len(self.client.get("/files", headers=self.auth(a)).get_json()["files"]), 1)
 
-    def test_bad_study_mode(self):
-        res = self.client.post(
-            "/study/stream", json={"mode": "x"}, headers={"X-Access-Key": "secret-for-tests"}
-        )
-        self.assertEqual(res.status_code, 400)
+    def test_delete_account_removes_everything(self):
+        from io import BytesIO
+        token = self.make_user("gone@example.com")
+        h = self.auth(token)
+        self.client.post("/upload", data={"file": (BytesIO(b"temporary notes"), "t.txt")},
+                         headers=h, content_type="multipart/form-data")
+        self.assertEqual(self.client.delete("/auth/account", json={"password": "wrong-pass"}, headers=h).status_code, 400)
+        self.assertEqual(self.client.delete("/auth/account", json={"password": "correct-horse"}, headers=h).status_code, 200)
+        self.assertEqual(self.client.get("/auth/me", headers=h).status_code, 401)
+        again = self.client.post("/auth/login", json={"email": "gone@example.com", "password": "correct-horse"})
+        self.assertEqual(again.status_code, 401)
+
+    def test_empty_question_and_bad_mode_with_sign_in(self):
+        h = self.auth(self.make_user("q@example.com"))
+        self.assertEqual(self.client.post("/chat", json={"question": "  "}, headers=h).status_code, 400)
+        self.assertEqual(self.client.post("/study/stream", json={"mode": "x"}, headers=h).status_code, 400)
 
 
 if __name__ == "__main__":
