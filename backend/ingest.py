@@ -5,7 +5,13 @@ CHUNK_SIZE = 800     # characters per chunk
 CHUNK_OVERLAP = 150  # characters shared between neighbouring chunks
 
 
-MIN_TEXT = 20        # a page with fewer characters is treated as a scan (an image)
+# PyMuPDF needs Tesseract's language data. If the installer's PATH change hasn't reached
+# this process yet, point it at the default Windows install folder.
+_TESSDATA = r"C:\Program Files\Tesseract-OCR\tessdata"
+if not os.environ.get("TESSDATA_PREFIX") and os.path.isdir(_TESSDATA):
+    os.environ["TESSDATA_PREFIX"] = _TESSDATA
+
+MIN_TEXT = 20       # a page with fewer characters is treated as a scan (an image)
 ocr_available = True  # flips to False the first time OCR fails (Tesseract not installed)
 
 
