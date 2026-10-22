@@ -158,6 +158,61 @@ body {
 .msg.bot.error { border-left-color: var(--ink); color: var(--margin); }
 .msg.bot.thinking { color: var(--pencil); font-style: italic; }
 
+/* ---------- Chats list ---------- */
+.shelf-head { display: flex; align-items: center; justify-content: space-between; margin: 1.25rem 0 0.5rem; }
+.shelf-head .shelf-title { margin: 0; }
+.new-chat {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.new-chat:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+.chat-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.25rem;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.chat-list li {
+  display: flex;
+  align-items: center;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--line);
+}
+.chat-list li.active { border-left-color: var(--highlight); background: var(--white); }
+.chat-list .chat-open {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.5rem 0.5rem;
+  background: none;
+  border: none;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-list .chat-del {
+  font: inherit;
+  padding: 0.3rem 0.6rem;
+  background: none;
+  border: none;
+  color: var(--pencil);
+  cursor: pointer;
+}
+.chat-list .chat-del:hover:not(:disabled) { color: var(--margin); }
+.chat-list button:disabled, .new-chat:disabled { opacity: 0.5; cursor: wait; }
+.chat-list button:focus-visible, .new-chat:focus-visible { outline: 3px solid var(--highlight); outline-offset: 2px; }
+
 /* ---------- Password box ---------- */
 .login {
   position: fixed;
@@ -250,6 +305,16 @@ body {
 }
 .composer button:hover { background: #cfcfcf; }
 .composer button:disabled { opacity: 0.5; cursor: wait; }
+
+/* Attach and mic buttons beside the question box */
+.composer .icon-btn {
+  padding: 0 0.9rem;
+  background: var(--white);
+  color: var(--ink);
+  font-size: 1.1rem;
+}
+.composer .icon-btn:hover:not(:disabled) { background: var(--line); }
+.composer .icon-btn.on { background: var(--margin); border-color: var(--margin); color: #fff; }
 
 /* ---------- Phones: stack the columns ---------- */
 @media (max-width: 760px) {

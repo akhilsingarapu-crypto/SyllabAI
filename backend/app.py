@@ -5,7 +5,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
-from ingest import ingest_file
+from ingest import SUPPORTED, ingest_file
 from store import DATA_DIR, add_chunks, delete_source, list_sources, search
 from rag import STUDY_MODES, answer_question, stream_answer, stream_study
 
@@ -19,7 +19,7 @@ app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # reject uploads over 20 MB
 UPLOAD_DIR = os.path.join(DATA_DIR, "upload")
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-ALLOWED = {".pdf", ".txt"}
+ALLOWED = set(SUPPORTED)
 MAX_HISTORY = 6  # last 3 question/answer pairs
 
 
@@ -95,14 +95,15 @@ def upload():
 
     name = secure_filename(file.filename)
     if os.path.splitext(name)[1].lower() not in ALLOWED:
-        return jsonify(error="Only PDF or .txt"), 400
+        return jsonify(error="This file type isn't supported. Try PDF, Word, PowerPoint, Excel, text, web page, ebook or a photo."), 400
 
     path = os.path.join(UPLOAD_DIR, name)
     file.save(path)
     chunks = ingest_file(path)  # Phase 4: read + split into chunks (tagged with page)
     if not chunks:
         os.remove(path)
-        hint = " It looks like a scan: install Tesseract OCR and upload it again." if name.lower().endswith(".pdf") else ""
+        scanned = name.lower().endswith((".pdf", ".png", ".jpg", ".jpeg"))
+        hint = " Scans and photos need OCR (Tesseract), which this server may not have, or the picture is too unclear." if scanned else ""
         return jsonify(error="No readable text found in this file." + hint), 422
     add_chunks(name, chunks)    # Phase 5: embed + store in ChromaDB
     return jsonify(message="saved", filename=name, chunks=len(chunks))

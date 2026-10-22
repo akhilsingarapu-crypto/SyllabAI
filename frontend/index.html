@@ -16,10 +16,16 @@
     <aside class="shelf">
       <h1 class="brand">Syllab<mark>AI</mark></h1>
 
+      <div class="shelf-head">
+        <h2 class="shelf-title">Chats</h2>
+        <button type="button" id="new-chat" class="new-chat">+ New chat</button>
+      </div>
+      <ul class="chat-list" id="chat-list" aria-label="Your chats"></ul>
+
       <label class="dropzone" id="dropzone" for="file-input">
         <strong>Add your notes</strong>
-        <span>Drop a PDF or .txt here, or click to choose</span>
-        <input type="file" id="file-input" accept=".pdf,.txt" multiple hidden>
+        <span>Drop a PDF, .txt or photo of notes here, or click to choose</span>
+        <input type="file" id="file-input" accept=".pdf,.txt,.png,.jpg,.jpeg" multiple hidden>
       </label>
 
       <h2 class="shelf-title">Your notes</h2>
@@ -50,7 +56,10 @@
       </div>
 
       <form class="composer" id="chat-form">
+        <button type="button" class="icon-btn" id="attach" title="Add notes (PDF, .txt or photo)" aria-label="Add notes">📎</button>
+        <input type="file" id="attach-input" accept=".pdf,.txt,.png,.jpg,.jpeg" multiple hidden>
         <textarea id="question" rows="1" placeholder="Ask about your notes…" aria-label="Your question" required></textarea>
+        <button type="button" class="icon-btn" id="mic" title="Speak your question" aria-label="Speak your question" aria-pressed="false">🎤</button>
         <button type="submit" id="send">Ask</button>
       </form>
     </main>

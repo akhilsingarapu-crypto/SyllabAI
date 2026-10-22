@@ -14,7 +14,9 @@ Upload your PDF / .txt notes, then ask questions answered only from those notes 
 
 ## Features
 
-- Upload and remove notes
+- Separate chats (new, switch, delete), saved in your browser, each with its own memory
+- Upload and remove notes: PDF, Word, PowerPoint, Excel, CSV, text/Markdown, web pages, ebooks and photos (photos and scanned PDFs use OCR)
+- 📎 attach button and 🎤 voice input beside the question box
 - "Ask in" picker: answer from one file or all notes
 - Summarize / Quiz me / Flashcards buttons (whole file or all notes)
 - Clear chat and Save chat (downloads a .txt) buttons

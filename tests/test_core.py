@@ -62,6 +62,53 @@ class IngestTests(unittest.TestCase):
             self.assertEqual(ingest_file(path), [])
 
 
+class FileTypeTests(unittest.TestCase):
+    """Each supported office/web format gives back its text."""
+
+    def read(self, name, writer):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, name)
+            writer(path)
+            return ingest_file(path)
+
+    def test_docx(self):
+        import docx
+        def write(p):
+            d = docx.Document(); d.add_paragraph("zebra stripes"); d.save(p)
+        self.assertIn("zebra stripes", self.read("a.docx", write)[0]["text"])
+
+    def test_pptx_pages_are_slide_numbers(self):
+        import pptx
+        def write(p):
+            pr = pptx.Presentation()
+            s = pr.slides.add_slide(pr.slide_layouts[1])
+            s.shapes.title.text = "otters"
+            pr.save(p)
+        chunks = self.read("a.pptx", write)
+        self.assertEqual(chunks[0]["page"], 1)
+        self.assertIn("otters", chunks[0]["text"])
+
+    def test_xlsx(self):
+        import openpyxl
+        def write(p):
+            wb = openpyxl.Workbook(); wb.active.append(["Asha", 91]); wb.save(p)
+        self.assertIn("Asha | 91", self.read("a.xlsx", write)[0]["text"])
+
+    def test_html_skips_scripts(self):
+        def write(p):
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("<body><p>whales</p><script>secret=1</script></body>")
+        text = self.read("a.html", write)[0]["text"]
+        self.assertIn("whales", text)
+        self.assertNotIn("secret", text)
+
+    def test_csv_and_markdown_read_as_text(self):
+        def write(p):
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("city,pop\nParis,2100000\n")
+        self.assertIn("Paris,2100000", self.read("a.csv", write)[0]["text"])
+
+
 class SourceFormatTests(unittest.TestCase):
     def test_page_ranges(self):
         self.assertEqual(app_module.page_ranges([9, 1, 2, 3, 5, 8]), "1-3, 5, 8-9")
