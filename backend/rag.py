@@ -10,7 +10,7 @@ MODEL = "openai/gpt-oss-120b"
 TOP_K = 4
 MAX_DISTANCE = 1.3  # chunks farther than this are treated as unrelated (on-topic ~0.6-1.1, off-topic 1.5+)
 
-# ---- YOUR LEARNING STYLE: edit these lines to tune how StudyBuddy explains ----
+# ---- YOUR LEARNING STYLE: edit these lines to tune how SyllabAI explains ----
 LEARNING_STYLE = (
     "Use simple everyday words and avoid jargon unless you explain it. "
     "Explain step by step in short bullet points. "
@@ -19,7 +19,7 @@ LEARNING_STYLE = (
 )
 
 SYSTEM_PROMPT = (
-    "You are StudyBuddy, a friendly study helper. "
+    "You are SyllabAI, a friendly study helper. "
     "Answer the student's question using ONLY the notes provided. "
     "Earlier messages are the conversation so far: use them to work out what words like "
     "'it', 'that' or 'the other one' refer to, and ignore notes unrelated to that topic. "
