@@ -5,6 +5,7 @@ hashes. A sign-in gives the browser a random token; only the token's SHA-256 is 
 leaked database does not leak working sessions.
 """
 import hashlib
+import hmac
 import os
 import re
 import secrets
@@ -27,6 +28,8 @@ SESSION_SECONDS = 30 * 24 * 3600       # stay signed in for 30 days
 MIN_PASSWORD = 8
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 ALLOW_SIGNUP = os.getenv("ALLOW_SIGNUP", "1") == "1"   # set ALLOW_SIGNUP=0 to close registration
+SIGNUP_CODE = os.getenv("SIGNUP_CODE", "")             # if set, new accounts must type this invite code
+DAILY_LIMIT = int(os.getenv("DAILY_LIMIT", "150"))     # AI calls (questions, quizzes, grading) per user per day
 
 # Too many wrong passwords for one email from one address: wait a while.
 MAX_FAILS, FAIL_WINDOW = 5, 15 * 60
@@ -75,6 +78,12 @@ def init_db():
               data TEXT NOT NULL,
               updated_at INTEGER NOT NULL,
               PRIMARY KEY (user_id, id)
+            );
+            CREATE TABLE IF NOT EXISTS usage (
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              day TEXT NOT NULL,
+              count INTEGER NOT NULL,
+              PRIMARY KEY (user_id, day)
             );
             CREATE TABLE IF NOT EXISTS feedback (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,6 +134,22 @@ def current_user():
     return _public(row) if row else None
 
 
+def try_spend(user_id):
+    """Count one AI call against today's limit. False means the limit is already used up."""
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    with closing(_db()) as conn, conn:
+        row = conn.execute("SELECT count FROM usage WHERE user_id = ? AND day = ?", (user_id, day)).fetchone()
+        if (row["count"] if row else 0) >= DAILY_LIMIT:
+            return False
+        conn.execute(
+            "INSERT INTO usage (user_id, day, count) VALUES (?, ?, 1) "
+            "ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1",
+            (user_id, day),
+        )
+        conn.execute("DELETE FROM usage WHERE day < ?", (time.strftime("%Y-%m-%d", time.gmtime(time.time() - 7 * 86400)),))
+    return True
+
+
 def _clean_name(value):
     return " ".join(str(value or "").split())[:60]
 
@@ -148,6 +173,8 @@ def signup():
     if not ALLOW_SIGNUP:
         return jsonify(error="Sign-ups are closed."), 403
     data = request.get_json(silent=True) or {}
+    if SIGNUP_CODE and not hmac.compare_digest(str(data.get("code") or "").encode(), SIGNUP_CODE.encode()):
+        return jsonify(error="That invite code is wrong. Ask whoever runs this site for it."), 403
     name = _clean_name(data.get("name"))
     email = str(data.get("email") or "").strip().lower()
     password = data.get("password")

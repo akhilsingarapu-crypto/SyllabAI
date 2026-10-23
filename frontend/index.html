@@ -28,6 +28,7 @@
         <h2 class="shelf-title">Chats</h2>
         <button type="button" id="new-chat" class="new-chat">+ New chat</button>
       </div>
+      <input type="search" class="chat-search" id="chat-search" placeholder="Search chats…" aria-label="Search your chats" hidden>
       <ul class="chat-list" id="chat-list" aria-label="Your chats"></ul>
 
       <label class="dropzone" id="dropzone" for="file-input">
@@ -59,6 +60,12 @@
             <option value="">All notes</option>
           </select>
         </label>
+        <label class="scope-label">Answer from
+          <select id="knowledge" aria-label="Where answers come from">
+            <option value="notes">My notes only</option>
+            <option value="general">Notes + general knowledge</option>
+          </select>
+        </label>
         <label class="scope-label">Answer in
           <select id="lang" aria-label="Language of the answer">
             <option value="">Same as my question</option>
@@ -71,6 +78,7 @@
         <button type="button" data-study="summary">Summarize</button>
         <button type="button" data-study="quiz">Quiz me</button>
         <button type="button" data-study="flashcards">Flashcards</button>
+        <button type="button" id="open-practice">Practice</button>
         <button type="button" id="export-chat" class="ghost">Save chat</button>
         <button type="button" id="clear-chat" class="ghost">Clear chat</button>
       </div>
@@ -96,6 +104,9 @@
       <label id="name-row" hidden>Name
         <input type="text" id="auth-name" autocomplete="name" maxlength="60">
       </label>
+      <label id="code-row" hidden>Invite code
+        <input type="text" id="auth-code" autocomplete="off">
+      </label>
       <label id="email-row">Email
         <input type="email" id="auth-email" autocomplete="email" required>
       </label>
@@ -109,6 +120,49 @@
       <button type="button" class="link" id="auth-forgot">Forgot password?</button>
       <button type="button" class="link" id="auth-back" hidden>Back to sign in</button>
     </form>
+  </div>
+
+  <!-- Practice: quiz questions (typed and marked) or flip cards, one at a time -->
+  <div class="overlay" id="practice" hidden>
+    <div class="card wide" role="dialog" aria-modal="true" aria-labelledby="practice-title">
+      <div class="card-head">
+        <h2 id="practice-title">Practice</h2>
+        <button type="button" class="close" id="practice-close" aria-label="Close practice">✕</button>
+      </div>
+
+      <div id="practice-setup" class="section">
+        <p class="hint" id="practice-scope-note"></p>
+        <div class="row">
+          <button type="button" id="start-quiz">Quiz me (type answers)</button>
+          <button type="button" id="start-cards">Flashcards (flip)</button>
+        </div>
+        <p class="form-msg" id="practice-msg" role="status"></p>
+      </div>
+
+      <div id="practice-run" class="section" hidden>
+        <p class="hint" id="practice-progress"></p>
+        <p class="practice-q" id="practice-q"></p>
+        <textarea id="practice-answer" rows="3" placeholder="Type your answer…" aria-label="Your answer"></textarea>
+        <p class="practice-a" id="practice-a" hidden></p>
+        <p class="form-msg" id="practice-feedback" role="status"></p>
+        <div class="row">
+          <button type="button" id="p-check">Check my answer</button>
+          <button type="button" id="p-flip">Show answer</button>
+          <button type="button" id="p-knew" hidden>I knew it</button>
+          <button type="button" id="p-missed" hidden>Missed it</button>
+          <button type="button" id="p-next" hidden>Next</button>
+        </div>
+      </div>
+
+      <div id="practice-done" class="section" hidden>
+        <h3 id="practice-score"></h3>
+        <div id="practice-missed-list"></div>
+        <div class="row">
+          <button type="button" id="p-again">Practice again</button>
+          <button type="button" id="p-close2">Close</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Profile: name, password, sign out, delete account -->

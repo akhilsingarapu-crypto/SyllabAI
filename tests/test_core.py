@@ -329,9 +329,9 @@ class RetrievalCutoffTests(unittest.TestCase):
         from store import add_chunks
         add_chunks("cutoff-user", "photo.png", [{"text": "banana bread recipe with flour and eggs", "page": None}])
         far = "quantum chromodynamics lecture on gluon confinement"
-        refused, _, _ = rag._prepare("cutoff-user", far, [], None)          # all notes: far match is refused
+        refused, _, _, _ = rag._prepare("cutoff-user", far, [], None)          # all notes: far match is refused
         self.assertIn("couldn't find", refused)
-        fixed, hits, messages = rag._prepare("cutoff-user", far, [], "photo.png")   # one file picked: used anyway
+        fixed, hits, messages, _ = rag._prepare("cutoff-user", far, [], "photo.png")   # one file picked: used anyway
         self.assertIsNone(fixed)
         self.assertEqual(hits[0]["source"], "photo.png")
         self.assertIn("banana bread", messages[-1]["content"])

@@ -30,6 +30,12 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      - key: SIGNUP_CODE
+        sync: false        # invite code new users must enter (recommended)
+      - key: DAILY_LIMIT
+        value: "150"
+      - key: MAX_USER_MB
+        value: "200"
       - key: ALLOW_SIGNUP
         value: "1"         # set to 0 to close registration
     disk:

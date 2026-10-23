@@ -218,7 +218,47 @@ body {
 .card button.link:hover:not(:disabled) { background: none; color: var(--ink); }
 .card [hidden] { display: none !important; }   /* `display: grid` on labels would otherwise defeat the hidden attribute */
 
+/* ---------- Practice screen ---------- */
+#practice { background: rgba(0, 0, 0, 0.75); }
+:root[data-theme="light"] #practice { background: rgba(0, 0, 0, 0.4); }
+.card textarea {
+  font: inherit;
+  padding: 0.65rem 0.9rem;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.card textarea:focus-visible { outline: 3px solid var(--highlight); outline-offset: 2px; }
+.practice-q { margin: 0; font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
+.practice-a { margin: 0; padding: 0.5rem 0.8rem; border-left: 3px solid var(--highlight); overflow-wrap: anywhere; }
+.section .row { flex-wrap: wrap; }
+#practice-missed-list p { margin: 0.3rem 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+
 /* ---------- Chats list ---------- */
+.chat-search {
+  width: 100%;
+  margin-bottom: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  font-size: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--white);
+  color: var(--ink);
+}
+.chat-search[hidden] { display: none; }
+.chat-search:focus-visible { outline: 3px solid var(--highlight); outline-offset: 2px; }
+.chat-list .chat-edit {
+  font: inherit;
+  padding: 0.3rem 0.4rem;
+  background: none;
+  border: none;
+  color: var(--pencil);
+  cursor: pointer;
+}
+.chat-list .chat-edit:hover:not(:disabled) { color: var(--ink); }
 .shelf-head { display: flex; align-items: center; justify-content: space-between; margin: 1.25rem 0 0.5rem; }
 .shelf-head .shelf-title { margin: 0; }
 .new-chat {

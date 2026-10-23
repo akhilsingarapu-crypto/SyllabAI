@@ -9,3 +9,4 @@ Step-by-step guidance is given in chat; this file is the reference.
 - Uploads over 20 MB are rejected. `ALLOWED_ORIGINS` is not needed (same address for page and API).
 - Password-reset emails need `APP_URL` (your https address) and the `SMTP_*` settings from the README; without them reset links are only printed in the Render logs.
 - Accounts, chats and feedback live in `app.db` on the same disk as the notes (`DATA_DIR`).
+- Set `SIGNUP_CODE` (an invite code) so strangers can't make accounts, and consider `DAILY_LIMIT` / `MAX_USER_MB` (see the README table); every question costs your Groq quota.

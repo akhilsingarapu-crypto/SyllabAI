@@ -9,11 +9,13 @@ from flask import Flask, Response, g, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
-from auth import auth_bp, current_user, init_db
+from auth import DAILY_LIMIT, SIGNUP_CODE, auth_bp, current_user, init_db, try_spend
 from chats import chats_bp
 from ingest import SUPPORTED, ingest_file
 from store import DATA_DIR, add_chunks, delete_owner, delete_source, list_sources, search
-from rag import LANGUAGES, STUDY_MODES, answer_question, stream_answer, stream_study
+from rag import (
+    LANGUAGES, STUDY_MODES, answer_question, generate_practice, grade_answer, stream_answer, stream_study,
+)
 
 app = Flask(__name__)
 # Lets the frontend (opened from a file / other port) call this server.
@@ -53,6 +55,23 @@ def require_login():
 def owner_id():
     """Who the notes belong to: the signed-in user's id, as text."""
     return str(g.user["id"])
+
+
+MAX_USER_MB = int(os.getenv("MAX_USER_MB", "200"))   # uploaded files per user
+
+
+def folder_size(path):
+    return sum(
+        os.path.getsize(os.path.join(root, name))
+        for root, _dirs, names in os.walk(path) for name in names
+    )
+
+
+def spend_question():
+    """Count one AI call for this user. Returns an error response if today's limit is used up, else None."""
+    if try_spend(g.user["id"]):
+        return None
+    return jsonify(error=f"You've used today's limit of {DAILY_LIMIT} AI requests. It resets tomorrow."), 429
 
 
 def user_upload_dir():
@@ -106,7 +125,7 @@ def frontend_file():
 
 @app.get("/health")
 def health():
-    return jsonify(status="ok")
+    return jsonify(status="ok", signup_code=bool(SIGNUP_CODE))   # signup_code: the sign-up form must ask for it
 
 
 @app.post("/upload")
@@ -119,7 +138,10 @@ def upload():
     if os.path.splitext(name)[1].lower() not in ALLOWED:
         return jsonify(error="This file type isn't supported. Try PDF, Word, PowerPoint, Excel, text, web page, ebook or a photo."), 400
 
-    path = os.path.join(user_upload_dir(), name)
+    folder = user_upload_dir()
+    if folder_size(folder) + (request.content_length or 0) > MAX_USER_MB * 1024 * 1024:
+        return jsonify(error=f"Your storage is full ({MAX_USER_MB} MB). Remove some notes first."), 413
+    path = os.path.join(folder, name)
     file.save(path)
     chunks = ingest_file(path)  # Phase 4: read + split into chunks (tagged with page)
     if not chunks:
@@ -182,7 +204,8 @@ def parse_chat_request():
     ][-MAX_HISTORY:]
     source = data.get("source")
     source = source if isinstance(source, str) and source else None  # None = all notes
-    return (question or None), history, source, parse_language(data)
+    general = data.get("knowledge") == "general"   # "Notes + general knowledge" instead of "My notes only"
+    return (question or None), history, source, parse_language(data), general
 
 
 def parse_language(data):
@@ -193,12 +216,15 @@ def parse_language(data):
 
 @app.post("/chat")
 def chat():
-    question, history, source, language = parse_chat_request()
+    question, history, source, language, general = parse_chat_request()
     if not question:
         return jsonify(error="Empty question"), 400
+    limited = spend_question()
+    if limited:
+        return limited
 
     try:
-        answer, hits = answer_question(owner_id(), question, history, source, language)
+        answer, hits = answer_question(owner_id(), question, history, source, language, general)
     except Exception as err:  # bad key, no internet, rate limit...
         print("chat error:", err)
         return jsonify(error=str(err)), 500
@@ -209,11 +235,14 @@ def chat():
 def chat_stream():
     """Same as /chat, but sends the answer piece by piece as JSON lines:
     {"sources": [...]} first, then {"delta": "text"} repeatedly, or {"error": "..."}."""
-    question, history, source, language = parse_chat_request()
+    question, history, source, language, general = parse_chat_request()
     if not question:
         return jsonify(error="Empty question"), 400
+    limited = spend_question()
+    if limited:
+        return limited
     owner = owner_id()   # read now: the response is produced after this request has ended
-    return stream_response(lambda: stream_answer(owner, question, history, source, language), passages=True)
+    return stream_response(lambda: stream_answer(owner, question, history, source, language, general), passages=True)
 
 
 @app.post("/study/stream")
@@ -225,9 +254,51 @@ def study_stream():
         return jsonify(error="mode must be summary, quiz or flashcards"), 400
     source = data.get("source")
     source = source if isinstance(source, str) and source else None
+    limited = spend_question()
+    if limited:
+        return limited
     owner = owner_id()
     language = parse_language(data)
     return stream_response(lambda: stream_study(owner, mode, source, language))
+
+
+@app.post("/practice/generate")
+def practice_generate():
+    """Questions or flashcards as data for the Practice screen. Body: {"kind": "quiz"|"cards", "source", "language"}."""
+    data = request.get_json(silent=True) or {}
+    kind = data.get("kind")
+    if kind not in ("quiz", "cards"):
+        return jsonify(error="kind must be quiz or cards"), 400
+    source = data.get("source")
+    source = source if isinstance(source, str) and source else None
+    limited = spend_question()
+    if limited:
+        return limited
+    try:
+        items = generate_practice(owner_id(), kind, source, parse_language(data))
+    except Exception as err:
+        print("practice error:", err, flush=True)
+        return jsonify(error=str(err)), 500
+    if items is None:
+        return jsonify(error="Upload some notes first."), 400
+    return jsonify(items=items)
+
+
+@app.post("/practice/grade")
+def practice_grade():
+    """Mark one typed answer. Body: {"question", "expected", "answer", "language"}."""
+    data = request.get_json(silent=True) or {}
+    question, expected, answer = (str(data.get(k) or "").strip()[:1500] for k in ("question", "expected", "answer"))
+    if not (question and expected and answer):
+        return jsonify(error="Type an answer first."), 400
+    limited = spend_question()
+    if limited:
+        return limited
+    try:
+        return jsonify(**grade_answer(question, expected, answer, parse_language(data)))
+    except Exception as err:
+        print("grade error:", err, flush=True)
+        return jsonify(error="Couldn't mark that answer. Try again."), 500
 
 
 def passages_for(hits):

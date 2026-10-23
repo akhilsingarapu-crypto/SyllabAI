@@ -1,3 +1,4 @@
+import base64
 import os
 from html.parser import HTMLParser
 
@@ -5,6 +6,8 @@ import docx      # python-docx: .docx
 import openpyxl  # .xlsx
 import pptx      # python-pptx: .pptx
 import pymupdf   # PyMuPDF: .pdf, .epub, photos
+
+from llm import VISION_MODEL, get_client
 
 CHUNK_SIZE = 800     # characters per chunk
 CHUNK_OVERLAP = 150  # characters shared between neighbouring chunks
@@ -96,6 +99,48 @@ def _read_html(path):
     return [(None, "".join(stripper.parts))]
 
 
+PHOTO_PROMPT = (
+    "Transcribe all the text in this image exactly as written, in reading order. "
+    "If there are diagrams, tables or formulas, describe them briefly in words. "
+    "Output only the transcription, with no commentary. If the image has no readable text, output exactly: NO_TEXT"
+)
+
+
+def _vision_text(path):
+    """Text of a photo as read by the vision AI, or None if that isn't available.
+    The picture is sent to Groq (like your questions are). Set PHOTO_AI=0 to turn this off."""
+    if os.getenv("PHOTO_AI", "1") != "1":
+        return None
+    try:
+        with pymupdf.open(path) as doc:
+            rect = doc[0].rect
+            zoom = min(1.0, 1600 / max(rect.width, rect.height))   # keep the upload small
+            jpeg = doc[0].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).tobytes("jpeg", jpg_quality=80)
+        image = base64.b64encode(jpeg).decode()
+        resp = get_client().chat.completions.create(
+            model=VISION_MODEL,
+            max_completion_tokens=3000,
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": PHOTO_PROMPT},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + image}},
+            ]}],
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        return None if not text or text.startswith("NO_TEXT") else text
+    except Exception as err:    # no key, no internet, model gone: use the offline reader instead
+        print("photo AI unavailable, using OCR:", err, flush=True)
+        return None
+
+
+def _read_photo(path):
+    """[(None, text)] for a photo: the vision AI first, Tesseract OCR as the backup."""
+    text = _vision_text(path)
+    if text:
+        return [(None, text)]
+    with pymupdf.open(path) as doc:   # an image opens as a one-page document
+        return [(None, _page_text(page)) for page in doc]
+
+
 def extract_pages(path):
     """Return [(page_number_or_None, text)] for any supported file.
 
@@ -110,8 +155,7 @@ def extract_pages(path):
         with pymupdf.open(path) as doc:
             return [(None, page.get_text()) for page in doc]
     if lower.endswith(IMAGE_TYPES):
-        with pymupdf.open(path) as doc:   # an image opens as a one-page document
-            return [(None, _page_text(page)) for page in doc]
+        return _read_photo(path)
     if lower.endswith(".docx"):
         return _read_docx(path)
     if lower.endswith(".pptx"):

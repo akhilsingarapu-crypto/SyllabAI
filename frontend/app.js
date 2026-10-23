@@ -47,6 +47,9 @@ const attachBtn   = document.getElementById("attach");
 const attachInput = document.getElementById("attach-input");
 const micBtn      = document.getElementById("mic");
 const lang        = document.getElementById("lang");
+const knowledge   = document.getElementById("knowledge");
+const chatSearch  = document.getElementById("chat-search");
+const authCode    = document.getElementById("auth-code");
 const themeBtn    = document.getElementById("theme-btn");
 const deleteAllBtn = document.getElementById("delete-all");
 
@@ -270,7 +273,9 @@ function renderChat() {
 // Draw the list of chats in the sidebar
 function renderChatList() {
   chatList.replaceChildren();
-  chats.forEach((chat) => {
+  chatSearch.hidden = chats.length < 5;          // searching only helps once there are a few chats
+  const needle = chatSearch.hidden ? "" : chatSearch.value.trim().toLowerCase();
+  chats.filter((chat) => chat.title.toLowerCase().includes(needle)).forEach((chat) => {
     const row = document.createElement("li");
     if (chat.id === activeId) row.classList.add("active");
 
@@ -282,6 +287,14 @@ function renderChatList() {
     open.disabled = busy;
     open.addEventListener("click", () => switchChat(chat.id));
 
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "chat-edit";
+    edit.textContent = "✎";
+    edit.setAttribute("aria-label", `Rename chat: ${chat.title}`);
+    edit.disabled = busy;
+    edit.addEventListener("click", () => renameChat(chat));
+
     const del = document.createElement("button");
     del.type = "button";
     del.className = "chat-del";
@@ -290,7 +303,7 @@ function renderChatList() {
     del.disabled = busy;
     del.addEventListener("click", () => deleteChat(chat.id));
 
-    row.append(open, del);
+    row.append(open, edit, del);
     chatList.appendChild(row);
   });
   newChatBtn.disabled = busy;
@@ -329,6 +342,18 @@ function deleteChat(id) {
   renderChatList();
 }
 
+function renameChat(chat) {
+  if (busy) return;
+  const title = window.prompt("Rename this chat:", chat.title);
+  if (title === null) return;                      // cancelled
+  const clean = title.replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!clean) return;
+  chat.title = clean;
+  persist(chat);
+  renderChatList();
+}
+
+chatSearch.addEventListener("input", renderChatList);
 newChatBtn.addEventListener("click", newChat);
 
 // ---------- Asking a question ----------
@@ -390,11 +415,18 @@ lang.addEventListener("change", () => {
 });
 function currentLanguage() { return lang.value || null; }
 
+// "Answer from": my notes only, or notes first and then the AI's general knowledge (marked as such)
+const KNOWLEDGE_KEY = "syllabai-knowledge";
+try { knowledge.value = localStorage.getItem(KNOWLEDGE_KEY) === "general" ? "general" : "notes"; } catch { /* storage blocked */ }
+knowledge.addEventListener("change", () => {
+  try { localStorage.setItem(KNOWLEDGE_KEY, knowledge.value); } catch { /* storage blocked */ }
+});
+
 async function askServer(text, onText) {
   const chat = activeChat();
   const reply = await streamFrom(
     "/chat/stream",
-    { question: text, history: chat.history, source: currentScope(), language: currentLanguage() },
+    { question: text, history: chat.history, source: currentScope(), language: currentLanguage(), knowledge: knowledge.value },
     onText,
   );
   // Remember this turn (in this chat only) so follow-up questions have context
@@ -433,7 +465,9 @@ async function ask(label, run) {
     await persist(chat);
   } catch (err) {
     waiting.remove();
-    addMessage(`Couldn't reach the server. Check that it's running, then ask again. (${err.message})`, "bot", "error");
+    if (err.message === "SIGNED_OUT") return;
+    const network = err.message === "Failed to fetch";
+    addMessage(network ? "Couldn't reach the server. Check that it's running, then ask again." : err.message, "bot", "error");
   } finally {
     setBusy(false);
     question.focus();
@@ -717,6 +751,7 @@ dropzone.addEventListener("drop", (e) => handleFiles(e.dataTransfer.files));
 let user = null;                        // { id, email, name } while signed in
 let authMode = "login";                 // "login", "signup", "forgot" (ask for a reset link) or "reset" (choose a new password)
 let resetToken = "";                    // from the link in the reset email
+let needsCode = false;                  // true when the server asks new accounts for an invite code
 
 // Sign-in and sign-up have no token yet, so they use plain fetch instead of apiFetch
 async function authRequest(path, body) {
@@ -737,6 +772,8 @@ function setAuthMode(mode, info = "") {
   document.getElementById("tab-login").setAttribute("aria-selected", String(mode === "login"));
   document.getElementById("tab-signup").setAttribute("aria-selected", String(signup));
   document.getElementById("name-row").hidden = !signup;
+  document.getElementById("code-row").hidden = !(signup && needsCode);
+  authCode.required = signup && needsCode;
   document.getElementById("email-row").hidden = reset;
   document.getElementById("pass-row").hidden = forgot;
   document.getElementById("pass-label").textContent = reset ? "New password" : "Password";
@@ -775,7 +812,7 @@ authForm.addEventListener("submit", async (event) => {
     }
     const signup = authMode === "signup";
     const data = await authRequest(signup ? "/auth/signup" : "/auth/login", {
-      name: authName.value, email: authEmail.value, password: authPass.value,
+      name: authName.value, email: authEmail.value, password: authPass.value, code: authCode.value,
     });
     setToken(data.token);
     authForm.reset();
@@ -898,6 +935,145 @@ document.getElementById("del-form").addEventListener("submit", (event) => {
   });
 });
 
+// ---------- Practice: quiz (typed answers, marked by the AI) or flip cards ----------
+const practiceBox = document.getElementById("practice");
+const $p = (id) => document.getElementById(id);
+const practice = { kind: "quiz", items: [], index: 0, score: 0, missed: [] };
+
+function showPracticePart(part) {          // "setup", "run" or "done"
+  ["setup", "run", "done"].forEach((p) => { $p(`practice-${p}`).hidden = p !== part; });
+}
+
+function openPractice() {
+  $p("practice-scope-note").textContent =
+    `Uses ${scope.value ? scope.value : "all your notes"}. Change it with "Ask in" before opening this.`;
+  setMsg($p("practice-msg"), "");
+  $p("start-quiz").disabled = $p("start-cards").disabled = false;
+  showPracticePart("setup");
+  practiceBox.hidden = false;
+}
+const closePractice = () => { practiceBox.hidden = true; };
+
+$p("open-practice").addEventListener("click", openPractice);
+$p("practice-close").addEventListener("click", closePractice);
+$p("p-close2").addEventListener("click", closePractice);
+$p("p-again").addEventListener("click", openPractice);
+practiceBox.addEventListener("click", (e) => { if (e.target === practiceBox) closePractice(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !practiceBox.hidden) closePractice(); });
+
+async function startPractice(kind) {
+  const msg = $p("practice-msg");
+  setMsg(msg, "Making your questions… this takes a few seconds.", true);
+  $p("start-quiz").disabled = $p("start-cards").disabled = true;
+  try {
+    const res = await apiFetch("/practice/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, source: currentScope(), language: currentLanguage() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);
+    Object.assign(practice, { kind, items: data.items, index: 0, score: 0, missed: [] });
+    showPracticePart("run");
+    showPracticeItem();
+  } catch (err) {
+    if (err.message !== "SIGNED_OUT") setMsg(msg, err.message, false);
+    $p("start-quiz").disabled = $p("start-cards").disabled = false;
+  }
+}
+$p("start-quiz").addEventListener("click", () => startPractice("quiz"));
+$p("start-cards").addEventListener("click", () => startPractice("cards"));
+
+function showPracticeItem() {
+  const quiz = practice.kind === "quiz";
+  const item = practice.items[practice.index];
+  $p("practice-progress").textContent = `${quiz ? "Question" : "Card"} ${practice.index + 1} of ${practice.items.length}`;
+  $p("practice-q").textContent = item.q;
+  const answer = $p("practice-answer");
+  answer.value = "";
+  answer.hidden = !quiz;
+  answer.disabled = false;
+  $p("practice-a").hidden = true;
+  setMsg($p("practice-feedback"), "");
+  $p("p-check").hidden = !quiz;
+  $p("p-check").disabled = false;
+  $p("p-flip").hidden = quiz;
+  ["p-knew", "p-missed", "p-next"].forEach((id) => { $p(id).hidden = true; });
+  if (quiz) answer.focus();
+}
+
+// Reveal the model answer, then offer the next step
+function revealAnswer(next) {
+  const item = practice.items[practice.index];
+  $p("practice-a").textContent = `Answer: ${item.a}`;
+  $p("practice-a").hidden = false;
+  $p("p-check").hidden = true;
+  $p("p-flip").hidden = true;
+  next.forEach((id) => { $p(id).hidden = false; });
+}
+
+$p("p-check").addEventListener("click", async () => {
+  const answer = $p("practice-answer").value.trim();
+  const feedback = $p("practice-feedback");
+  if (!answer) { setMsg(feedback, "Type your answer first.", false); return; }
+  const item = practice.items[practice.index];
+  $p("p-check").disabled = true;
+  $p("practice-answer").disabled = true;
+  setMsg(feedback, "Marking…", true);
+  try {
+    const res = await apiFetch("/practice/grade", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: item.q, expected: item.a, answer, language: currentLanguage() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);
+    const label = { correct: "✓ Correct.", partly: "◐ Partly right.", wrong: "✗ Not quite." }[data.verdict];
+    practice.score += data.verdict === "correct" ? 1 : data.verdict === "partly" ? 0.5 : 0;
+    if (data.verdict !== "correct") practice.missed.push(item);
+    setMsg(feedback, `${label} ${data.feedback}`, data.verdict === "correct");
+    revealAnswer(["p-next"]);
+  } catch (err) {
+    if (err.message !== "SIGNED_OUT") setMsg(feedback, err.message, false);
+    $p("p-check").disabled = false;
+    $p("practice-answer").disabled = false;
+  }
+  updateNextLabel();
+});
+
+$p("p-flip").addEventListener("click", () => revealAnswer(["p-knew", "p-missed"]));
+$p("p-knew").addEventListener("click", () => { practice.score += 1; advancePractice(); });
+$p("p-missed").addEventListener("click", () => { practice.missed.push(practice.items[practice.index]); advancePractice(); });
+$p("p-next").addEventListener("click", advancePractice);
+
+function updateNextLabel() {
+  $p("p-next").textContent = practice.index + 1 >= practice.items.length ? "See my score" : "Next";
+}
+
+function advancePractice() {
+  practice.index += 1;
+  if (practice.index < practice.items.length) { showPracticeItem(); return; }
+  const total = practice.items.length;
+  const shown = Number.isInteger(practice.score) ? practice.score : practice.score.toFixed(1);
+  $p("practice-score").textContent = practice.kind === "quiz"
+    ? `You scored ${shown} out of ${total}.`
+    : `You knew ${shown} of ${total} cards.`;
+  const list = $p("practice-missed-list");
+  list.replaceChildren();
+  if (practice.missed.length) {
+    const title = document.createElement("p");
+    title.className = "hint";
+    title.textContent = "Worth another look:";
+    list.appendChild(title);
+    practice.missed.forEach((item) => {
+      const p = document.createElement("p");
+      p.textContent = `${item.q} — ${item.a}`;
+      list.appendChild(p);
+    });
+  }
+  showPracticePart("done");
+}
+
 // ---------- Export the chat as a text file ----------
 exportBtn.addEventListener("click", () => {
   const lines = [...messages.querySelectorAll(".msg:not(.thinking)")].map((m) => {
@@ -933,6 +1109,10 @@ themeBtn.addEventListener("click", () => {
 // ---------- Start: sign in with the saved token, or show the sign-in screen ----------
 (async function start() {
   if (MOCK) { enterApp({ id: 0, name: "Demo", email: "demo@example.com" }); return; }
+
+  try {                                 // does this server ask for an invite code at sign-up?
+    needsCode = Boolean((await (await fetch(`${API_URL}/health`)).json()).signup_code);
+  } catch { /* server unreachable: handled below */ }
 
   // Opened from the link in a password-reset email: ask for the new password
   const reset = location.hash.match(/^#reset=([\w-]+)$/);

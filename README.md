@@ -15,6 +15,9 @@ Upload your PDF / .txt notes, then ask questions answered only from those notes 
 ## Features
 
 - Separate chats (new, switch, delete), saved on the server with your account (any device), each with its own memory
+- "Answer from" switch: **My notes only** (default, never guesses) or **Notes + general knowledge** (answers questions your notes don't cover from the AI's own knowledge, clearly labelled "Not from your notes")
+- Practice: quiz questions you type answers to (marked by the AI) and flip flashcards with a score
+- Photos of notes are read by a vision AI (falls back to Tesseract OCR); non-English questions are translated for searching
 - "Answer in" picker: 16 languages (the question itself is best asked in English, since search is English-focused)
 - "Show the passages used" under each answer, 👍/👎 on answers, and Save PDF
 - Delete all notes, light/dark theme, upload progress
@@ -49,3 +52,16 @@ password, sign out, or delete the account and all its notes.
 ## Tests
 
 `python -m unittest discover -s tests -v` (does not call the AI or touch your notes).
+
+## Limits and safety settings (environment variables)
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ALLOW_SIGNUP` | 1 | `0` closes registration |
+| `SIGNUP_CODE` | (none) | if set, new accounts must type this invite code |
+| `DAILY_LIMIT` | 150 | AI requests per user per day (questions, quizzes, marking) |
+| `MAX_USER_MB` | 200 | uploaded files per user |
+| `PHOTO_AI` | 1 | `0` stops photos being sent to the vision AI (Tesseract only) |
+| `VISION_MODEL` / `CHAT_MODEL` | qwen/qwen3.8-27b / openai/gpt-oss-120b | which Groq models to use |
+
+Photos are sent to Groq for reading, like your questions are.
