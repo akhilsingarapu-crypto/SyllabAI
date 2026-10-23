@@ -128,7 +128,9 @@ def upload():
         hint = " Scans and photos need OCR (Tesseract), which this server may not have, or the picture is too unclear." if scanned else ""
         return jsonify(error="No readable text found in this file." + hint), 422
     add_chunks(owner_id(), name, chunks)    # Phase 5: embed + store in ChromaDB
-    return jsonify(message="saved", filename=name, chunks=len(chunks))
+    # A short preview of what was read, so a photo that OCR misread is easy to spot
+    preview = " ".join(chunks[0]["text"].split())[:200]
+    return jsonify(message="saved", filename=name, chunks=len(chunks), preview=preview)
 
 
 @app.get("/files")

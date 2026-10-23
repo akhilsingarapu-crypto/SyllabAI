@@ -596,10 +596,11 @@ function uploadWithProgress(file, onProgress) {
 async function uploadFile(file) {
   const status = addFileRow(file.name);
   try {
+    let result = {};
     if (MOCK) {
       await sleep(600);
     } else {
-      await uploadWithProgress(file, (percent) => {
+      result = await uploadWithProgress(file, (percent) => {
         // once everything is sent the server still has to read and index the file
         status.textContent = percent < 100 ? `Uploading ${percent}%` : "Reading the file…";
       });
@@ -608,6 +609,11 @@ async function uploadFile(file) {
     status.classList.add("done");
     status.parentElement.remove();       // the saved row from the server replaces it
     await refreshFiles();
+    // For photos, show what was read: handwriting and blurry pictures are often misread
+    if (result.preview && /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i.test(file.name)) {
+      scope.value = file.name;           // questions now use this photo until you change "Ask in"
+      addMessage(`I read this from ${file.name}: “${result.preview}${result.preview.length >= 200 ? "…" : ""}” — "Ask in" is now set to this photo. If that looks wrong, try a clearer, well-lit, printed or typed page.`, "bot");
+    }
   } catch (err) {
     if (err.message === "SIGNED_OUT") return;
     status.textContent = "Failed";

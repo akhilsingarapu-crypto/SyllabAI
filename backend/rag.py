@@ -72,9 +72,15 @@ def _prepare(owner, question, history, source=None, language=None):
     hits = search(owner, f"{last_q} {question}".strip(), TOP_K, source)
     if not hits:
         return "I don't have any notes yet. Upload a PDF or .txt file first.", [], None
-    hits = [h for h in hits if h["distance"] <= MAX_DISTANCE]
+    # With "All notes" a far-away match means the question isn't covered, so refuse early.
+    # When the student picked one file in "Ask in" they clearly mean that file (a photo's OCR text
+    # or a vague question like "what is this about?" scores far away too), so use its best chunks
+    # anyway; the prompt still tells the model to say so if the notes don't contain the answer.
+    if not source:
+        hits = [h for h in hits if h["distance"] <= MAX_DISTANCE]
     if not hits:
-        return "I couldn't find that in your notes. Try rephrasing, or upload notes that cover it.", [], None
+        return ("I couldn't find that in your notes. Try rephrasing, pick the file in \"Ask in\", "
+                "or use Summarize for a general overview."), [], None
 
     context = "\n\n".join(
         f"[Note {i} - {h['source']}]\n{h['text']}" for i, h in enumerate(hits, 1)
