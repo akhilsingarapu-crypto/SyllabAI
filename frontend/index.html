@@ -14,7 +14,10 @@
 
     <!-- LEFT: your notes -->
     <aside class="shelf">
-      <h1 class="brand">Syllab<mark>AI</mark></h1>
+      <div class="brand-row">
+        <h1 class="brand">Syllab<mark>AI</mark></h1>
+        <button type="button" class="theme-btn" id="theme-btn" aria-label="Switch to light theme" title="Switch theme">☀</button>
+      </div>
 
       <button type="button" class="profile-btn" id="profile-btn" aria-label="Open your profile" hidden>
         <span class="avatar" id="avatar" aria-hidden="true"></span>
@@ -33,7 +36,10 @@
         <input type="file" id="file-input" accept=".pdf,.txt,.png,.jpg,.jpeg" multiple hidden>
       </label>
 
-      <h2 class="shelf-title">Your notes</h2>
+      <div class="shelf-head">
+        <h2 class="shelf-title">Your notes</h2>
+        <button type="button" class="new-chat" id="delete-all" title="Remove every note you uploaded">Delete all</button>
+      </div>
       <ul class="file-list" id="file-list">
         <li class="empty">No notes yet. Add one to get started.</li>
       </ul>
@@ -51,6 +57,15 @@
         <label class="scope-label">Ask in
           <select id="scope" aria-label="Which notes to use">
             <option value="">All notes</option>
+          </select>
+        </label>
+        <label class="scope-label">Answer in
+          <select id="lang" aria-label="Language of the answer">
+            <option value="">Same as my question</option>
+            <option>English</option><option>Hindi</option><option>Telugu</option><option>Tamil</option>
+            <option>Kannada</option><option>Malayalam</option><option>Bengali</option><option>Marathi</option>
+            <option>Gujarati</option><option>Urdu</option><option>Spanish</option><option>French</option>
+            <option>German</option><option>Arabic</option><option>Chinese</option><option>Japanese</option>
           </select>
         </label>
         <button type="button" data-study="summary">Summarize</button>
@@ -81,15 +96,18 @@
       <label id="name-row" hidden>Name
         <input type="text" id="auth-name" autocomplete="name" maxlength="60">
       </label>
-      <label>Email
+      <label id="email-row">Email
         <input type="email" id="auth-email" autocomplete="email" required>
       </label>
-      <label>Password
+      <label id="pass-row"><span id="pass-label">Password</span>
         <input type="password" id="auth-password" autocomplete="current-password" minlength="8" required>
       </label>
       <p class="hint" id="auth-hint" hidden>At least 8 characters.</p>
+      <p class="form-msg ok" id="auth-info" role="status"></p>
       <p class="form-error" id="auth-error" role="alert"></p>
       <button type="submit" class="primary" id="auth-submit">Sign in</button>
+      <button type="button" class="link" id="auth-forgot">Forgot password?</button>
+      <button type="button" class="link" id="auth-back" hidden>Back to sign in</button>
     </form>
   </div>
 
@@ -126,7 +144,7 @@
 
       <form id="del-form" class="section danger">
         <h3>Delete account</h3>
-        <p class="hint">Permanently removes your account, notes and uploaded files. Chats saved in this browser stay until you clear site data.</p>
+        <p class="hint">Permanently removes your account, chats, notes and uploaded files.</p>
         <input type="password" id="del-password" placeholder="Your password to confirm" autocomplete="current-password" required>
         <button type="submit" class="danger-btn">Delete my account</button>
         <p class="form-msg" id="del-msg" role="status"></p>

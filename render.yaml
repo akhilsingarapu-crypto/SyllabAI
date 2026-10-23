@@ -18,6 +18,18 @@ services:
         value: /var/data
       - key: GROQ_API_KEY
         sync: false        # you type this in the Render dashboard; it is never stored in git
+      - key: APP_URL
+        sync: false        # your site's https address, used in password-reset emails
+      - key: SMTP_HOST
+        sync: false        # e.g. smtp.gmail.com (optional; without it reset links go to the logs)
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
       - key: ALLOW_SIGNUP
         value: "1"         # set to 0 to close registration
     disk:

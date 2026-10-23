@@ -158,6 +158,66 @@ body {
 .msg.bot.error { border-left-color: var(--ink); color: var(--margin); }
 .msg.bot.thinking { color: var(--pencil); font-style: italic; }
 
+/* ---------- Light theme (dark is the default) ---------- */
+:root[data-theme="light"] {
+  --paper: #f7f6f2;
+  --ink: #1a1a1a;
+  --pencil: #5c5c5c;
+  --highlight: #e56a00;
+  --margin: #c92a2a;
+  --line: #d8d6cf;
+  --white: #ffffff;
+}
+:root[data-theme="light"] .dropzone.dragover { background: #fff3d6; }
+:root[data-theme="light"] .file-list .status.done { color: #1b8a3c; }
+:root[data-theme="light"] .form-msg.ok { color: #1b8a3c; }
+:root[data-theme="light"] #profile { background: rgba(0, 0, 0, 0.4); }
+:root[data-theme="light"] .composer .icon-btn:hover:not(:disabled) { background: var(--line); }
+
+.brand-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.brand-row .brand { margin: 0; }
+.theme-btn {
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--white);
+  color: var(--ink);
+  cursor: pointer;
+}
+.theme-btn:hover { border-color: var(--ink); }
+.theme-btn:focus-visible { outline: 3px solid var(--highlight); outline-offset: 2px; }
+
+/* Buttons under each answer: thumbs, PDF, and the passages the answer came from */
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 0.6rem; }
+.actions button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--pencil);
+  cursor: pointer;
+}
+.actions button:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
+.actions button.picked { border-color: var(--highlight); color: var(--ink); }
+.actions button:disabled { cursor: default; opacity: 0.6; }
+.actions button:focus-visible { outline: 3px solid var(--highlight); outline-offset: 2px; }
+.passages { margin-top: 0.5rem; font-size: 0.85rem; color: var(--pencil); }
+.passages summary { cursor: pointer; }
+.passages blockquote {
+  margin: 0.4rem 0 0;
+  padding: 0.3rem 0.7rem;
+  border-left: 3px solid var(--highlight);
+  overflow-wrap: anywhere;
+}
+.passages cite { display: block; font-style: normal; font-weight: 600; color: var(--ink); margin-bottom: 0.15rem; }
+.card button.link { border: none; background: none; color: var(--pencil); font-weight: 400; text-decoration: underline; padding: 0.2rem; }
+.card button.link:hover:not(:disabled) { background: none; color: var(--ink); }
+.card [hidden] { display: none !important; }   /* `display: grid` on labels would otherwise defeat the hidden attribute */
+
 /* ---------- Chats list ---------- */
 .shelf-head { display: flex; align-items: center; justify-content: space-between; margin: 1.25rem 0 0.5rem; }
 .shelf-head .shelf-title { margin: 0; }

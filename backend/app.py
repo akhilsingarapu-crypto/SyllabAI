@@ -1,13 +1,19 @@
+import html
+import io
 import json
 import os
+import shutil
+
+import pymupdf
 from flask import Flask, Response, g, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 from auth import auth_bp, current_user, init_db
+from chats import chats_bp
 from ingest import SUPPORTED, ingest_file
-from store import DATA_DIR, add_chunks, delete_source, list_sources, search
-from rag import STUDY_MODES, answer_question, stream_answer, stream_study
+from store import DATA_DIR, add_chunks, delete_owner, delete_source, list_sources, search
+from rag import LANGUAGES, STUDY_MODES, answer_question, stream_answer, stream_study
 
 app = Flask(__name__)
 # Lets the frontend (opened from a file / other port) call this server.
@@ -25,9 +31,13 @@ MAX_HISTORY = 6  # last 3 question/answer pairs
 
 init_db()
 app.register_blueprint(auth_bp)
+app.register_blueprint(chats_bp)
 
-# Everything except the page itself, /health and sign-up / sign-in needs a signed-in user.
-OPEN_PATHS = {"/", "/health", "/index.html", "/app.js", "/style.css", "/auth/signup", "/auth/login"}
+# Everything except the page itself, /health and sign-up / sign-in / password reset needs a signed-in user.
+OPEN_PATHS = {
+    "/", "/health", "/index.html", "/app.js", "/style.css",
+    "/auth/signup", "/auth/login", "/auth/forgot", "/auth/reset",
+}
 
 
 @app.before_request
@@ -126,6 +136,15 @@ def files():
     return jsonify(files=list_sources(owner_id()))
 
 
+@app.delete("/files")
+def delete_all_files():
+    """Remove every note this user has (their chats and account stay)."""
+    count = sum(f["chunks"] for f in list_sources(owner_id()))
+    delete_owner(owner_id())
+    shutil.rmtree(os.path.join(UPLOAD_DIR, owner_id()), ignore_errors=True)
+    return jsonify(message="deleted all", chunks=count)
+
+
 @app.delete("/files/<path:filename>")
 def delete_file(filename):
     name = secure_filename(filename)  # same cleaning as upload, blocks ../ tricks
@@ -161,17 +180,23 @@ def parse_chat_request():
     ][-MAX_HISTORY:]
     source = data.get("source")
     source = source if isinstance(source, str) and source else None  # None = all notes
-    return (question or None), history, source
+    return (question or None), history, source, parse_language(data)
+
+
+def parse_language(data):
+    """The 'Answer in' choice if it is one we offer, else None (= same language as the question)."""
+    language = data.get("language")
+    return language if language in LANGUAGES else None
 
 
 @app.post("/chat")
 def chat():
-    question, history, source = parse_chat_request()
+    question, history, source, language = parse_chat_request()
     if not question:
         return jsonify(error="Empty question"), 400
 
     try:
-        answer, hits = answer_question(owner_id(), question, history, source)
+        answer, hits = answer_question(owner_id(), question, history, source, language)
     except Exception as err:  # bad key, no internet, rate limit...
         print("chat error:", err)
         return jsonify(error=str(err)), 500
@@ -182,11 +207,11 @@ def chat():
 def chat_stream():
     """Same as /chat, but sends the answer piece by piece as JSON lines:
     {"sources": [...]} first, then {"delta": "text"} repeatedly, or {"error": "..."}."""
-    question, history, source = parse_chat_request()
+    question, history, source, language = parse_chat_request()
     if not question:
         return jsonify(error="Empty question"), 400
     owner = owner_id()   # read now: the response is produced after this request has ended
-    return stream_response(lambda: stream_answer(owner, question, history, source))
+    return stream_response(lambda: stream_answer(owner, question, history, source, language), passages=True)
 
 
 @app.post("/study/stream")
@@ -199,15 +224,27 @@ def study_stream():
     source = data.get("source")
     source = source if isinstance(source, str) and source else None
     owner = owner_id()
-    return stream_response(lambda: stream_study(owner, mode, source))
+    language = parse_language(data)
+    return stream_response(lambda: stream_study(owner, mode, source, language))
 
 
-def stream_response(start):
+def passages_for(hits):
+    """The exact note text each answer was based on, shortened, so the reader can check it."""
+    return [
+        {"source": h["source"], "page": h.get("page"), "text": " ".join(h["text"].split())[:400]}
+        for h in hits
+    ]
+
+
+def stream_response(start, passages=False):
     """Send start() -> (hits, pieces) as JSON lines: sources first, then text pieces."""
     def lines():
         try:
             hits, pieces = start()
-            yield json.dumps({"sources": format_sources(hits)}) + "\n"
+            first = {"sources": format_sources(hits)}
+            if passages:
+                first["passages"] = passages_for(hits)
+            yield json.dumps(first) + "\n"
             for piece in pieces:
                 yield json.dumps({"delta": piece}) + "\n"
         except Exception as err:
@@ -215,6 +252,54 @@ def stream_response(start):
             yield json.dumps({"error": str(err)}) + "\n"
 
     return Response(lines(), mimetype="application/x-ndjson")
+
+
+PDF_CSS = "body { font-family: sans-serif; font-size: 11pt; } h1 { font-size: 16pt; } li { margin-bottom: 4pt; }"
+
+
+@app.post("/export/pdf")
+def export_pdf():
+    """Turn an answer (quiz, flashcards, summary...) into a downloadable PDF.
+    Body: {"title": str, "text": str}. Bullets ('- ' or '1.') become list items; **bold** is kept."""
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()[:30000]
+    if not text:
+        return jsonify(error="Nothing to export."), 400
+    title = html.escape(" ".join(str(data.get("title") or "SyllabAI").split())[:100])
+
+    body, in_list = [f"<h1>{title}</h1>"], False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        bullet = line[:2] in ("- ", "* ") or (line[:1].isdigit() and line[1:3] in (". ", ") "))
+        content = html.escape(line.lstrip("-*0123456789.) ").strip() if bullet else line)
+        parts = content.split("**")           # **bold** pairs -> <b>
+        content = "".join(f"<b>{p}</b>" if i % 2 else p for i, p in enumerate(parts))
+        if bullet and not in_list:
+            body.append("<ul>")
+        if not bullet and in_list:
+            body.append("</ul>")
+        in_list = bullet
+        body.append(f"<li>{content}</li>" if bullet else f"<p>{content}</p>")
+    if in_list:
+        body.append("</ul>")
+
+    out = io.BytesIO()
+    writer = pymupdf.DocumentWriter(out)
+    story = pymupdf.Story(html="".join(body), user_css=PDF_CSS)
+    page_rect = pymupdf.paper_rect("a4")
+    more = True
+    while more:
+        device = writer.begin_page(page_rect)
+        more, _ = story.place(page_rect + (50, 50, -50, -50))
+        story.draw(device)
+        writer.end_page()
+    writer.close()
+    return Response(
+        out.getvalue(), mimetype="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="syllabai.pdf"'},
+    )
 
 
 if __name__ == "__main__":

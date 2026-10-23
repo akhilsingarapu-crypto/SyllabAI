@@ -9,9 +9,12 @@ import os
 import re
 import secrets
 import shutil
+import smtplib
 import sqlite3
+import threading
 import time
 from contextlib import closing
+from email.message import EmailMessage
 
 from flask import Blueprint, g, jsonify, request
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -59,6 +62,28 @@ def init_db():
               token_hash TEXT PRIMARY KEY,
               user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
               expires_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS reset_tokens (
+              token_hash TEXT PRIMARY KEY,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              expires_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS chats (
+              id TEXT NOT NULL,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              title TEXT NOT NULL,
+              data TEXT NOT NULL,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, id)
+            );
+            CREATE TABLE IF NOT EXISTS feedback (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              rating TEXT NOT NULL,
+              question TEXT NOT NULL,
+              answer TEXT NOT NULL,
+              sources TEXT NOT NULL,
+              created_at INTEGER NOT NULL
             );
             """
         )
@@ -165,6 +190,80 @@ def login():
         _fails.pop(key, None)
         token = _new_session(conn, row["id"])
     return jsonify(token=token, user=_public(row))
+
+
+RESET_SECONDS = 3600   # a reset link works for one hour
+
+
+def _send_reset(email, link):
+    """Email the reset link. With no SMTP_HOST set (local use) it is printed in the server window instead."""
+    host = os.getenv("SMTP_HOST")
+    if not host:
+        print(f"[password reset] SMTP is not set up. Reset link for {email}: {link}", flush=True)
+        return
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = "Reset your SyllabAI password"
+        msg["From"] = os.getenv("SMTP_FROM") or os.getenv("SMTP_USER") or "no-reply@localhost"
+        msg["To"] = email
+        msg.set_content(
+            f"Open this link to choose a new password (valid for 1 hour):\n\n{link}\n\n"
+            "If you did not ask for this, you can ignore this email."
+        )
+        with smtplib.SMTP(host, int(os.getenv("SMTP_PORT", "587")), timeout=15) as smtp:
+            smtp.starttls()
+            if os.getenv("SMTP_USER"):
+                smtp.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASSWORD", ""))
+            smtp.send_message(msg)
+    except Exception as err:   # never tell the visitor whether mail worked
+        print("[password reset] could not send email:", err, flush=True)
+
+
+@auth_bp.post("/forgot")
+def forgot():
+    """Always answers the same way, so it can't be used to find out which emails have accounts."""
+    email = str((request.get_json(silent=True) or {}).get("email") or "").strip().lower()
+    key = f"forgot|{email}|{request.remote_addr}"
+    if _too_many_fails(key):
+        return jsonify(error="Too many tries. Wait 15 minutes and try again."), 429
+    _fails.setdefault(key, []).append(time.time())
+
+    with closing(_db()) as conn, conn:
+        row = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+        if row:
+            token = secrets.token_urlsafe(32)
+            conn.execute(
+                "INSERT INTO reset_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                (_hash_token(token), row["id"], int(time.time()) + RESET_SECONDS),
+            )
+            base = (os.getenv("APP_URL") or request.host_url).rstrip("/")
+            # The token sits after '#', which browsers never send to any server, so it stays out of logs.
+            threading.Thread(target=_send_reset, args=(email, f"{base}/#reset={token}"), daemon=True).start()
+    return jsonify(message="If that email has an account, a reset link is on its way.")
+
+
+@auth_bp.post("/reset")
+def reset_password():
+    data = request.get_json(silent=True) or {}
+    problem = _password_problem(data.get("new"))
+    if problem:
+        return jsonify(error=problem), 400
+    with closing(_db()) as conn, conn:
+        conn.execute("DELETE FROM reset_tokens WHERE expires_at < ?", (int(time.time()),))
+        row = conn.execute(
+            "SELECT user_id FROM reset_tokens WHERE token_hash = ?",
+            (_hash_token(str(data.get("token") or "")),),
+        ).fetchone()
+        if not row:
+            return jsonify(error="This reset link is invalid or has expired."), 400
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (generate_password_hash(data["new"]), row["user_id"]),
+        )
+        # The old password may be known to someone else: sign out everywhere, kill other reset links.
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["user_id"],))
+        conn.execute("DELETE FROM reset_tokens WHERE user_id = ?", (row["user_id"],))
+    return jsonify(message="Password changed. You can sign in now.")
 
 
 @auth_bp.post("/logout")

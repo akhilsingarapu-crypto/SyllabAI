@@ -46,6 +46,9 @@ const newChatBtn = document.getElementById("new-chat");
 const attachBtn   = document.getElementById("attach");
 const attachInput = document.getElementById("attach-input");
 const micBtn      = document.getElementById("mic");
+const lang        = document.getElementById("lang");
+const themeBtn    = document.getElementById("theme-btn");
+const deleteAllBtn = document.getElementById("delete-all");
 
 // ---------- Chat helpers ----------
 function addMessage(text, kind, extraClass = "") {
@@ -97,33 +100,147 @@ function renderRich(box, text) {
   }
 }
 
-function addSources(box, sources) {
-  if (!sources || !sources.length) return;
-  const s = document.createElement("div");
-  s.className = "sources";
-  s.textContent = "Sources: " + sources.join(", ");
-  box.appendChild(s);
+function addSources(box, sources, passages) {
+  if (sources && sources.length) {
+    const s = document.createElement("div");
+    s.className = "sources";
+    s.textContent = "Sources: " + sources.join(", ");
+    box.appendChild(s);
+  }
+  // The exact note text the answer was based on, so you can check it
+  if (passages && passages.length) {
+    const details = document.createElement("details");
+    details.className = "passages";
+    const summary = document.createElement("summary");
+    summary.textContent = `Show the ${passages.length} passage${passages.length > 1 ? "s" : ""} used`;
+    details.appendChild(summary);
+    passages.forEach((p) => {
+      const quote = document.createElement("blockquote");
+      const cite = document.createElement("cite");
+      cite.textContent = p.source + (p.page ? ` (p. ${p.page})` : "");
+      quote.append(cite, document.createTextNode(p.text));
+      details.appendChild(quote);
+    });
+    box.appendChild(details);
+  }
+}
+
+// 👍 👎 and "Save PDF" under an answer. rec is the saved message (it remembers your rating).
+function addActions(box, rec, label, chat) {
+  const bar = document.createElement("div");
+  bar.className = "actions";
+  const make = (text, title) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    return b;
+  };
+  const up = make("👍", "Good answer");
+  const down = make("👎", "Bad answer");
+  const pdf = make("Save PDF", "Download this answer as a PDF");
+
+  const paint = () => {
+    up.classList.toggle("picked", rec.rating === "up");
+    down.classList.toggle("picked", rec.rating === "down");
+    up.disabled = down.disabled = Boolean(rec.rating);
+  };
+  const rate = async (rating) => {
+    rec.rating = rating;
+    paint();
+    try {
+      await apiFetch("/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating, question: label, answer: rec.text, sources: rec.sources || [] }),
+      });
+      persist(chat);
+    } catch {
+      rec.rating = undefined;           // it didn't reach the server: let them try again
+      paint();
+    }
+  };
+  up.addEventListener("click", () => rate("up"));
+  down.addEventListener("click", () => rate("down"));
+
+  pdf.addEventListener("click", async () => {
+    pdf.disabled = true;
+    try {
+      const res = await apiFetch("/export/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: label, text: rec.text }),
+      });
+      if (!res.ok) throw new Error();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(await res.blob());
+      link.download = "syllabai.pdf";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch {
+      pdf.textContent = "PDF failed";
+      setTimeout(() => { pdf.textContent = "Save PDF"; }, 2000);
+    } finally {
+      pdf.disabled = false;
+    }
+  });
+
+  paint();
+  bar.append(up, down, pdf);
+  box.appendChild(bar);
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// ---------- Separate chats (saved in this browser only) ----------
-const chatsKey = () => `syllabai-chats-${user.id}`;   // one saved set of chats per account
+// ---------- Separate chats (saved on the server, per account) ----------
+const activeKey = () => `syllabai-active-${user.id}`;     // which chat was open (remembered per device)
+const oldChatsKey = () => `syllabai-chats-${user.id}`;    // where earlier versions kept chats: this browser
 const MAX_CHATS = 30;
 const GREETING = "Hi! Add your notes on the left, then ask me anything about them.";
-let chats = [];        // newest first: { id, title, messages: [{ kind, text, sources }], history: [...] }
+let chats = [];        // most recently used first: { id, title, messages: [{ kind, text, sources, passages, rating }], history: [...] }
 let activeId = null;
 let busy = false;      // true while an answer is being written; chats can't be switched then
 
-function loadChats() {
+async function loadChats() {
+  chats = [];
   try {
-    const saved = JSON.parse(localStorage.getItem(chatsKey()));
-    if (saved && Array.isArray(saved.chats)) { chats = saved.chats; activeId = saved.activeId; }
-  } catch { /* nothing saved yet, or storage blocked: start fresh */ }
+    const res = await apiFetch("/chats");
+    if (res.ok) chats = (await res.json()).chats;
+  } catch (err) {
+    if (err.message === "SIGNED_OUT") throw err;
+  }
+  if (!chats.length) await migrateLocalChats();
+  try { activeId = localStorage.getItem(activeKey()); } catch { activeId = null; }
 }
 
-function saveChats() {
-  try { localStorage.setItem(chatsKey(), JSON.stringify({ chats, activeId })); } catch { /* storage full or blocked */ }
+// One time: chats the older version kept in this browser are copied up to the account
+async function migrateLocalChats() {
+  let old = null;
+  try { old = JSON.parse(localStorage.getItem(oldChatsKey())); } catch { /* none */ }
+  if (!old || !Array.isArray(old.chats)) return;
+  for (const chat of old.chats.filter((c) => c.messages && c.messages.length)) {
+    chats.push(chat);
+    await persist(chat);
+  }
+  try { localStorage.removeItem(oldChatsKey()); } catch { /* ignore */ }
+}
+
+// Save one chat to the server and move it to the top of the list
+async function persist(chat) {
+  const i = chats.indexOf(chat);
+  if (i > 0) { chats.splice(i, 1); chats.unshift(chat); }
+  try {
+    await apiFetch(`/chats/${chat.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: chat.title, messages: chat.messages, history: chat.history }),
+    });
+  } catch { /* offline or too long: it stays on screen and is saved again after the next change */ }
+}
+
+function saveActive() {
+  try { localStorage.setItem(activeKey(), activeId); } catch { /* storage blocked */ }
 }
 
 const activeChat = () => chats.find((c) => c.id === activeId);
@@ -141,9 +258,12 @@ function renderChat() {
   messages.replaceChildren();
   const chat = activeChat();
   if (!chat.messages.length) addMessage(GREETING, "bot");
+  let lastUser = "";
   chat.messages.forEach((m) => {
     const box = addMessage(m.text, m.kind);
-    if (m.kind === "bot") addSources(box, m.sources);
+    if (m.kind === "user") { lastUser = m.text; return; }
+    addSources(box, m.sources, m.passages);
+    addActions(box, m, lastUser, chat);
   });
 }
 
@@ -179,7 +299,7 @@ function renderChatList() {
 function switchChat(id) {
   if (busy || id === activeId) return;
   activeId = id;
-  saveChats();
+  saveActive();
   renderChat();
   renderChatList();
   question.focus();
@@ -190,7 +310,7 @@ function newChat() {
   // Re-use the current chat if it is still empty, so "New chat" doesn't pile up blanks
   if (!activeChat().messages.length) { question.focus(); return; }
   createChat();
-  saveChats();
+  saveActive();
   renderChat();
   renderChatList();
   question.focus();
@@ -201,9 +321,10 @@ function deleteChat(id) {
   const chat = chats.find((c) => c.id === id);
   if (!window.confirm(`Delete "${chat.title}"? This can't be undone.`)) return;
   chats = chats.filter((c) => c.id !== id);
+  apiFetch(`/chats/${id}`, { method: "DELETE" }).catch(() => { /* the server copy goes at the next clean-up */ });
   if (!chats.length) createChat();
   else if (id === activeId) activeId = chats[0].id;
-  saveChats();
+  saveActive();
   renderChat();
   renderChatList();
 }
@@ -219,7 +340,7 @@ async function streamFrom(path, payload, onText) {
     await sleep(800);
     const answer = `(Fake answer) You asked: "${payload.question || payload.mode}".`;
     onText(answer);
-    return { answer, sources: [] };
+    return { answer, sources: [], passages: [] };
   }
   const res = await apiFetch(path, {
     method: "POST",
@@ -233,11 +354,13 @@ async function streamFrom(path, payload, onText) {
 
   let answer = "";
   let sources = [];
+  let passages = [];
   const handleLine = (line) => {
     if (!line.trim()) return;
     const msg = JSON.parse(line);
     if (msg.error) throw new Error(msg.error);
     if (msg.sources) sources = msg.sources;
+    if (msg.passages) passages = msg.passages;
     if (msg.delta) { answer += msg.delta; onText(answer); }
   };
 
@@ -253,15 +376,27 @@ async function streamFrom(path, payload, onText) {
     lines.forEach(handleLine);
   }
   handleLine(buffer);
-  return { answer, sources };
+  return { answer, sources, passages };
 }
 
 // Which file the questions and study buttons use ("" = all notes)
 function currentScope() { return scope.value || null; }
 
+// "Answer in" choice ("" = same language as the question); remembered on this device
+const LANG_KEY = "syllabai-lang";
+try { lang.value = localStorage.getItem(LANG_KEY) || ""; } catch { /* storage blocked */ }
+lang.addEventListener("change", () => {
+  try { localStorage.setItem(LANG_KEY, lang.value); } catch { /* storage blocked */ }
+});
+function currentLanguage() { return lang.value || null; }
+
 async function askServer(text, onText) {
   const chat = activeChat();
-  const reply = await streamFrom("/chat/stream", { question: text, history: chat.history, source: currentScope() }, onText);
+  const reply = await streamFrom(
+    "/chat/stream",
+    { question: text, history: chat.history, source: currentScope(), language: currentLanguage() },
+    onText,
+  );
   // Remember this turn (in this chat only) so follow-up questions have context
   chat.history.push({ role: "user", content: text }, { role: "assistant", content: reply.answer });
   chat.history.splice(0, Math.max(0, chat.history.length - 6));
@@ -269,7 +404,7 @@ async function askServer(text, onText) {
 }
 
 function studyServer(mode, onText) {
-  return streamFrom("/study/stream", { mode, source: currentScope() }, onText);
+  return streamFrom("/study/stream", { mode, source: currentScope(), language: currentLanguage() }, onText);
 }
 
 // Shows a user bubble, then the answer as it streams in. run(onText) must return { answer, sources }.
@@ -289,11 +424,13 @@ async function ask(label, run) {
       messages.scrollTop = messages.scrollHeight;
     });
     if (!box) { waiting.remove(); box = addMessage(reply.answer || "(No answer)", "bot"); }
-    addSources(box, reply.sources);
-    // Save the exchange so it is still here after a reload or a switch to another chat
-    chat.messages.push({ kind: "user", text: label }, { kind: "bot", text: reply.answer, sources: reply.sources });
+    addSources(box, reply.sources, reply.passages);
+    // Save the exchange so it is still here after a reload, a switch to another chat, or on another device
+    const saved = { kind: "bot", text: reply.answer, sources: reply.sources, passages: reply.passages };
+    chat.messages.push({ kind: "user", text: label }, saved);
     if (chat.title === "New chat") chat.title = label.length > 40 ? label.slice(0, 40) + "…" : label;
-    saveChats();
+    addActions(box, saved, label, chat);
+    await persist(chat);
   } catch (err) {
     waiting.remove();
     addMessage(`Couldn't reach the server. Check that it's running, then ask again. (${err.message})`, "bot", "error");
@@ -337,7 +474,7 @@ clearBtn.addEventListener("click", () => {
   chat.messages = [];
   chat.history = [];
   chat.title = "New chat";
-  saveChats();
+  persist(chat);
   renderChat();
   renderChatList();
 });
@@ -434,31 +571,67 @@ async function removeFile(name, button) {
   }
 }
 
+// Upload with a progress callback (fetch can't report upload progress, XMLHttpRequest can)
+function uploadWithProgress(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}/upload`);
+    const token = getToken();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((100 * e.loaded) / e.total)); };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status === 401) { showAuth(); reject(new Error("SIGNED_OUT")); return; }
+      if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(data.error || `Server returned ${xhr.status}`)); return; }
+      resolve(data);
+    };
+    xhr.onerror = () => reject(new Error("Can't reach the server."));
+    const body = new FormData();
+    body.append("file", file);
+    xhr.send(body);
+  });
+}
+
 async function uploadFile(file) {
   const status = addFileRow(file.name);
   try {
     if (MOCK) {
       await sleep(600);
     } else {
-      const body = new FormData();
-      body.append("file", file);
-      const res = await apiFetch("/upload", { method: "POST", body });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Server returned ${res.status}`);
-      }
+      await uploadWithProgress(file, (percent) => {
+        // once everything is sent the server still has to read and index the file
+        status.textContent = percent < 100 ? `Uploading ${percent}%` : "Reading the file…";
+      });
     }
     status.textContent = "Ready";
     status.classList.add("done");
     status.parentElement.remove();       // the saved row from the server replaces it
     await refreshFiles();
   } catch (err) {
+    if (err.message === "SIGNED_OUT") return;
     status.textContent = "Failed";
     status.title = err.message;          // hover to see why
     status.classList.add("error");
     addMessage(`Couldn't add ${file.name}: ${err.message}`, "bot", "error");
   }
 }
+
+// "Delete all": removes every uploaded note after a confirmation
+deleteAllBtn.addEventListener("click", async () => {
+  if (!fileList.querySelector("[data-saved]")) return;       // nothing to delete
+  if (!window.confirm("Delete ALL your uploaded notes? Your chats and account stay. This can't be undone.")) return;
+  deleteAllBtn.disabled = true;
+  try {
+    const res = await apiFetch("/files", { method: "DELETE" });
+    if (!res.ok) throw new Error();
+    await refreshFiles();
+  } catch (err) {
+    if (err.message !== "SIGNED_OUT") addMessage("Couldn't delete your notes. Try again.", "bot", "error");
+  } finally {
+    deleteAllBtn.disabled = false;
+  }
+});
 
 // File types the server can read (keep in step with SUPPORTED in backend/ingest.py)
 const FILE_TYPES = [
@@ -536,7 +709,8 @@ dropzone.addEventListener("drop", (e) => handleFiles(e.dataTransfer.files));
 
 // ---------- Accounts: sign in / create account ----------
 let user = null;                        // { id, email, name } while signed in
-let authMode = "login";                 // "login" or "signup"
+let authMode = "login";                 // "login", "signup", "forgot" (ask for a reset link) or "reset" (choose a new password)
+let resetToken = "";                    // from the link in the reset email
 
 // Sign-in and sign-up have no token yet, so they use plain fetch instead of apiFetch
 async function authRequest(path, body) {
@@ -550,33 +724,56 @@ async function authRequest(path, body) {
   return data;
 }
 
-function setAuthMode(mode) {
+function setAuthMode(mode, info = "") {
   authMode = mode;
-  const signup = mode === "signup";
-  document.getElementById("tab-login").setAttribute("aria-selected", String(!signup));
+  const signup = mode === "signup", forgot = mode === "forgot", reset = mode === "reset";
+  document.querySelector(".tabs").hidden = !(mode === "login" || signup);
+  document.getElementById("tab-login").setAttribute("aria-selected", String(mode === "login"));
   document.getElementById("tab-signup").setAttribute("aria-selected", String(signup));
   document.getElementById("name-row").hidden = !signup;
-  document.getElementById("auth-hint").hidden = !signup;
+  document.getElementById("email-row").hidden = reset;
+  document.getElementById("pass-row").hidden = forgot;
+  document.getElementById("pass-label").textContent = reset ? "New password" : "Password";
+  document.getElementById("auth-hint").hidden = !(signup || reset);
+  document.getElementById("auth-forgot").hidden = mode !== "login";
+  document.getElementById("auth-back").hidden = !(forgot || reset);
   authName.required = signup;
-  authPass.autocomplete = signup ? "new-password" : "current-password";
-  authSubmit.textContent = signup ? "Create account" : "Sign in";
+  authEmail.required = !reset;
+  authPass.required = !forgot;
+  authPass.autocomplete = signup || reset ? "new-password" : "current-password";
+  authSubmit.textContent = { login: "Sign in", signup: "Create account", forgot: "Send reset link", reset: "Set new password" }[mode];
   authError.textContent = "";
+  document.getElementById("auth-info").textContent = info;
 }
 document.getElementById("tab-login").addEventListener("click", () => setAuthMode("login"));
 document.getElementById("tab-signup").addEventListener("click", () => setAuthMode("signup"));
+document.getElementById("auth-forgot").addEventListener("click", () => setAuthMode("forgot"));
+document.getElementById("auth-back").addEventListener("click", () => setAuthMode("login"));
 
 authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   authError.textContent = "";
   authSubmit.disabled = true;
   try {
+    if (authMode === "forgot") {
+      const data = await authRequest("/auth/forgot", { email: authEmail.value });
+      setAuthMode("login", data.message);
+      return;
+    }
+    if (authMode === "reset") {
+      const data = await authRequest("/auth/reset", { token: resetToken, new: authPass.value });
+      resetToken = "";
+      authForm.reset();
+      setAuthMode("login", data.message);
+      return;
+    }
     const signup = authMode === "signup";
     const data = await authRequest(signup ? "/auth/signup" : "/auth/login", {
       name: authName.value, email: authEmail.value, password: authPass.value,
     });
     setToken(data.token);
     authForm.reset();
-    enterApp(data.user);
+    await enterApp(data.user);
   } catch (err) {
     authError.textContent = err.message === "Failed to fetch" ? "Can't reach the server. Check that it's running." : err.message;
   } finally {
@@ -585,7 +782,7 @@ authForm.addEventListener("submit", async (event) => {
 });
 
 // Show the signed-in app for this user
-function enterApp(account) {
+async function enterApp(account) {
   user = account;
   authBox.hidden = true;
   profileBox.hidden = true;
@@ -594,7 +791,11 @@ function enterApp(account) {
   document.getElementById("avatar").textContent = (user.name.trim()[0] || "?").toUpperCase();
   chats = [];
   activeId = null;
-  loadChats();                          // this account's saved chats
+  try {
+    await loadChats();                  // this account's saved chats, from the server
+  } catch {
+    return;                             // signed out while loading: the sign-in screen is already showing
+  }
   if (!chats.length) createChat();
   else if (!activeChat()) activeId = chats[0].id;
   renderChat();
@@ -683,10 +884,10 @@ document.getElementById("signout").addEventListener("click", async () => {
 
 document.getElementById("del-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  if (!window.confirm("Delete your account, notes and uploaded files? This can't be undone.")) return;
-  const oldKey = chatsKey();
+  if (!window.confirm("Delete your account, chats, notes and uploaded files? This can't be undone.")) return;
+  const keys = [activeKey(), oldChatsKey()];   // this device's leftovers for the account
   profileCall("del-msg", "/auth/account", "DELETE", { password: document.getElementById("del-password").value }, () => {
-    try { localStorage.removeItem(oldKey); } catch { /* ignore */ }
+    keys.forEach((k) => { try { localStorage.removeItem(k); } catch { /* ignore */ } });
     showAuth();
   });
 });
@@ -707,13 +908,40 @@ exportBtn.addEventListener("click", () => {
   URL.revokeObjectURL(link.href);
 });
 
+// ---------- Light / dark theme ----------
+const THEME_KEY = "syllabai-theme";
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  themeBtn.textContent = theme === "light" ? "🌙" : "☀";
+  themeBtn.setAttribute("aria-label", theme === "light" ? "Switch to dark theme" : "Switch to light theme");
+}
+let theme = "dark";
+try { theme = localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark"; } catch { /* storage blocked */ }
+applyTheme(theme);
+themeBtn.addEventListener("click", () => {
+  theme = theme === "light" ? "dark" : "light";
+  applyTheme(theme);
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* storage blocked */ }
+});
+
 // ---------- Start: sign in with the saved token, or show the sign-in screen ----------
 (async function start() {
   if (MOCK) { enterApp({ id: 0, name: "Demo", email: "demo@example.com" }); return; }
+
+  // Opened from the link in a password-reset email: ask for the new password
+  const reset = location.hash.match(/^#reset=([\w-]+)$/);
+  if (reset) {
+    resetToken = reset[1];
+    history.replaceState(null, "", location.pathname + location.search);   // keep the token out of the address bar
+    showAuth();
+    setAuthMode("reset");
+    return;
+  }
+
   if (!getToken()) { showAuth(); return; }
   try {
     const res = await apiFetch("/auth/me");
-    enterApp((await res.json()).user);
+    await enterApp((await res.json()).user);
   } catch (err) {
     if (err.message === "SIGNED_OUT") return;          // apiFetch already showed the sign-in screen
     showAuth(false);                                   // server unreachable: keep the token for next time

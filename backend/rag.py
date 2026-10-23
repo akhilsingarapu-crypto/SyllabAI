@@ -43,7 +43,24 @@ def _get_client():
     return _client
 
 
-def _prepare(owner, question, history, source=None):
+# Languages the "Answer in" picker offers. None / "" means: reply in the language of the question.
+LANGUAGES = [
+    "English", "Hindi", "Telugu", "Tamil", "Kannada", "Malayalam", "Bengali", "Marathi",
+    "Gujarati", "Urdu", "Spanish", "French", "German", "Arabic", "Chinese", "Japanese",
+]
+
+
+def _language_note(language):
+    """Extra instruction for the system prompt, or '' to leave the language alone."""
+    if language not in LANGUAGES:
+        return ""
+    return (
+        f" Write your whole answer in {language}. Keep file names and exact technical terms from the "
+        f"notes; when a term has no common {language} word, give the English term in brackets."
+    )
+
+
+def _prepare(owner, question, history, source=None, language=None):
     """Find matching chunks and build the model messages.
 
     Returns (fixed_reply, hits, messages). fixed_reply is a ready-made answer when
@@ -63,29 +80,29 @@ def _prepare(owner, question, history, source=None):
         f"[Note {i} - {h['source']}]\n{h['text']}" for i, h in enumerate(hits, 1)
     )
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": SYSTEM_PROMPT + _language_note(language)},
         *history,
         {"role": "user", "content": f"NOTES:\n{context}\n\nQUESTION: {question}"},
     ]
     return None, hits, messages
 
 
-def answer_question(owner, question, history=None, source=None):
+def answer_question(owner, question, history=None, source=None, language=None):
     """RAG: find matching chunks, put them in the prompt, ask the model.
 
     history: earlier turns as [{"role": "user"|"assistant", "content": str}, ...],
     so follow-ups like "explain that more simply" make sense.
     """
-    fixed, hits, messages = _prepare(owner, question, history, source)
+    fixed, hits, messages = _prepare(owner, question, history, source, language)
     if fixed:
         return fixed, hits
     resp = _get_client().chat.completions.create(model=MODEL, messages=messages)
     return resp.choices[0].message.content, hits
 
 
-def stream_answer(owner, question, history=None, source=None):
+def stream_answer(owner, question, history=None, source=None, language=None):
     """Like answer_question, but returns (hits, generator of text pieces)."""
-    fixed, hits, messages = _prepare(owner, question, history, source)
+    fixed, hits, messages = _prepare(owner, question, history, source, language)
     if fixed:
         return hits, iter([fixed])
     return hits, _stream(messages)
@@ -122,7 +139,7 @@ STUDY_MODES = {
 }
 
 
-def stream_study(owner, mode, source=None):
+def stream_study(owner, mode, source=None, language=None):
     """Returns (chunks_used, generator of text pieces) for summary / quiz / flashcards."""
     if mode not in STUDY_MODES:
         raise ValueError(f"Unknown study mode: {mode}")
@@ -136,7 +153,7 @@ def stream_study(owner, mode, source=None):
             "content": (
                 "You are SyllabAI, a friendly study helper. Use ONLY the notes provided. "
                 "Format with plain text, short lines, '- ' bullets and **bold** for key terms; "
-                "do not use tables or headings. " + LEARNING_STYLE
+                "do not use tables or headings. " + LEARNING_STYLE + _language_note(language)
             ),
         },
         {"role": "user", "content": f"NOTES:\n{context}\n\nTASK: {STUDY_MODES[mode]}"},

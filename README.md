@@ -14,7 +14,10 @@ Upload your PDF / .txt notes, then ask questions answered only from those notes 
 
 ## Features
 
-- Separate chats (new, switch, delete), saved in your browser, each with its own memory
+- Separate chats (new, switch, delete), saved on the server with your account (any device), each with its own memory
+- "Answer in" picker: 16 languages (the question itself is best asked in English, since search is English-focused)
+- "Show the passages used" under each answer, 👍/👎 on answers, and Save PDF
+- Delete all notes, light/dark theme, upload progress
 - Upload and remove notes: PDF, Word, PowerPoint, Excel, CSV, text/Markdown, web pages, ebooks and photos (photos and scanned PDFs use OCR)
 - 📎 attach button and 🎤 voice input beside the question box
 - "Ask in" picker: answer from one file or all notes
@@ -38,7 +41,10 @@ password, sign out, or delete the account and all its notes.
 
 - To stop new people registering, set `ALLOW_SIGNUP=0` and restart (existing users can still sign in).
 - Five wrong passwords for one email from one address locks it for 15 minutes.
-- Chats are saved in the browser (per account), not on the server.
+- Forgot password: the sign-in screen sends a reset link. Without email set up (local use) the link is printed in the server window instead.
+  For real email set `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` and `APP_URL` (your site's address).
+- Chats are saved on the server, per account.
+- See what people thought of answers: `python backend/feedback_report.py`.
 
 ## Tests
 
